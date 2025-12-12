@@ -1,17 +1,12 @@
-import { randomUUID } from 'crypto';
-import type { BackendAdapter, AdapterContext } from '../../core/adapter.js';
-import type { ExecutionTask, TaskResult, TaskStatus } from '../../core/plan.js';
+import { randomUUID } from 'node:crypto';
 
-type JobState = { startedAt: number; durationMs: number };
-const jobs = new Map<string, JobState>();
+/** @type {Map<string, { startedAt: number, durationMs: number }>} */
+const jobs = new Map();
 
-export const mockAsyncAdapter: BackendAdapter = {
+export const mockAsyncAdapter = {
   name: 'mock-async',
 
-  async execute(
-    task: ExecutionTask,
-    _ctx: AdapterContext
-  ): Promise<TaskResult> {
+  async execute(task, _ctx) {
     const external_id = randomUUID();
     jobs.set(external_id, {
       startedAt: Date.now(),
@@ -31,10 +26,7 @@ export const mockAsyncAdapter: BackendAdapter = {
     };
   },
 
-  async checkStatus(
-    external_id: string,
-    _ctx: AdapterContext
-  ): Promise<TaskStatus> {
+  async checkStatus(external_id, _ctx) {
     const job = jobs.get(external_id);
     if (!job) return 'failed';
     const elapsed = Date.now() - job.startedAt;
@@ -45,3 +37,4 @@ export const mockAsyncAdapter: BackendAdapter = {
     return 'running';
   }
 };
+

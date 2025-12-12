@@ -112,7 +112,7 @@ xcfg will update the matching task and roll up request status.
 
 Execution Plans are DAGs of backend-neutral tasks. Translators can be:
 
-- **Code-based** (TypeScript): full flexibility and complex logic.
+- **Code-based** (JavaScript/TypeScript): full flexibility and complex logic.
 - **Declarative** (YAML/JSON): map intent fields to tasks + dependencies.
 
 A visual workflow editor can sit on top of the same plan IR, letting operators
@@ -166,16 +166,18 @@ This repo is currently a scaffold. Next steps are to add:
 
 ## POC Quickstart
 
-1. Install deps and build:
+Requirements: Node.js `>=22` (uses built-in `node:sqlite` for the default persistent store).
 
-```sh
-npm install
-```
-
-2. Start the server (builds then runs; SQLite store by default):
+1. Start the server (no `npm install` needed for the POC):
 
 ```sh
 npm start
+```
+
+Or run directly:
+
+```sh
+node src/server.js
 ```
 
 Optional auth: set `XCFG_API_KEY` to require callers to send either `x-api-key: <key>` or `Authorization: Bearer <key>`.
@@ -184,7 +186,7 @@ Optional storage:
 - `XCFG_DB_PATH=data/xcfg.db` to change SQLite path
 In SQLite mode, xcfg also persists audit events and exposes them via `GET /v1/requests/<request_id>/audit`.
 
-3. Submit an async request using the mock adapter:
+2. Submit an async request using the mock adapter:
 
 ```sh
 curl -s http://localhost:8080/v1/requests \
@@ -211,7 +213,7 @@ curl -s http://localhost:8080/v1/requests \
 
 The response returns `202` with `status: queued`. The runner will execute in‑process and the mock backend will complete after ~3s.
 
-4. Poll status:
+3. Poll status:
 
 ```sh
 curl -s http://localhost:8080/v1/requests/<request_id>
@@ -229,7 +231,7 @@ View the audit trail (SQLite mode):
 curl -s http://localhost:8080/v1/requests/<request_id>/audit
 ```
 
-5. View metrics:
+4. View metrics:
 
 ```sh
 curl -s http://localhost:8080/v1/metrics

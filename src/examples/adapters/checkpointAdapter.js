@@ -1,12 +1,6 @@
-import type { BackendAdapter, AdapterContext } from '../../core/adapter.js';
-import type { ExecutionTask, TaskResult } from '../../core/plan.js';
-
-export const checkpointAdapter: BackendAdapter = {
+export const checkpointAdapter = {
   name: 'checkpoint',
-  async execute(
-    task: ExecutionTask,
-    _ctx: AdapterContext
-  ): Promise<TaskResult> {
+  async execute(task, _ctx) {
     const now = new Date().toISOString();
     return {
       task_id: task.id,
@@ -22,3 +16,4 @@ export const checkpointAdapter: BackendAdapter = {
     };
   }
 };
+

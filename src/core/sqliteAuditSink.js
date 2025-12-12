@@ -1,25 +1,12 @@
-import { mkdirSync } from 'fs';
-import { dirname } from 'path';
-import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
-import type { AuditEvent, AuditSink } from './audit.js';
-
-type DBRow = {
-  request_id: string;
-  timestamp: string;
-  level: string;
-  stage: string;
-  message: string;
-  data_json: string | null;
-};
-
-export class SQLiteAuditSink implements AuditSink {
-  private db: Database.Database;
-
+export class SQLiteAuditSink {
   constructor(dbPath = 'data/xcfg.db') {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +22,7 @@ export class SQLiteAuditSink implements AuditSink {
     `);
   }
 
-  async write(event: AuditEvent): Promise<void> {
+  async write(event) {
     this.db
       .prepare(
         `INSERT INTO audit_events
@@ -49,15 +36,11 @@ export class SQLiteAuditSink implements AuditSink {
         level: event.level,
         stage: event.stage,
         message: event.message,
-        data_json:
-          event.data === undefined ? null : JSON.stringify(event.data)
+        data_json: event.data === undefined ? null : JSON.stringify(event.data)
       });
   }
 
-  async listByRequestId(
-    request_id: string,
-    limit = 1000
-  ): Promise<AuditEvent[]> {
+  async listByRequestId(request_id, limit = 1000) {
     const rows = this.db
       .prepare(
         `SELECT request_id, timestamp, level, stage, message, data_json
@@ -66,12 +49,12 @@ export class SQLiteAuditSink implements AuditSink {
          ORDER BY id ASC
          LIMIT ?`
       )
-      .all(request_id, limit) as DBRow[];
+      .all(request_id, limit);
 
     return rows.map(r => ({
       request_id: r.request_id,
       timestamp: r.timestamp,
-      level: r.level as AuditEvent['level'],
+      level: r.level,
       stage: r.stage,
       message: r.message,
       data: r.data_json ? JSON.parse(r.data_json) : undefined

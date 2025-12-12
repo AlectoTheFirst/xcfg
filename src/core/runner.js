@@ -1,23 +1,14 @@
-import type { XCFGEngine, RequestStatus } from './engine.js';
-import type { RequestStore } from './requestStore.js';
-import type { ExecutionTask, TaskResult } from './plan.js';
-
-export interface RunnerOptions {
-  pollIntervalMs?: number;
-  maxBatchSize?: number;
-}
-
 export class InProcessRunner {
-  private timer?: NodeJS.Timeout;
-  private busy = false;
+  constructor(engine, store, opts = {}) {
+    this.engine = engine;
+    this.store = store;
+    this.opts = opts;
 
-  constructor(
-    private engine: XCFGEngine,
-    private store: RequestStore,
-    private opts: RunnerOptions = {}
-  ) {}
+    this.timer = undefined;
+    this.busy = false;
+  }
 
-  start(): void {
+  start() {
     if (this.timer) return;
     const interval = this.opts.pollIntervalMs ?? 1000;
     this.timer = setInterval(() => {
@@ -25,17 +16,17 @@ export class InProcessRunner {
     }, interval);
   }
 
-  stop(): void {
+  stop() {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = undefined;
   }
 
-  async enqueue(_request_id: string): Promise<void> {
+  async enqueue(_request_id) {
     // Runner is polling-based for the POC.
   }
 
-  private async tick(): Promise<void> {
+  async tick() {
     if (this.busy) return;
     this.busy = true;
     try {
@@ -54,7 +45,7 @@ export class InProcessRunner {
     }
   }
 
-  private async processQueued(): Promise<void> {
+  async processQueued() {
     const queued = await this.store.listByStatus(
       ['queued'],
       this.opts.maxBatchSize ?? 5
@@ -76,11 +67,7 @@ export class InProcessRunner {
           plan
         );
 
-        await this.store.update(record.request_id, {
-          plan,
-          results,
-          status
-        });
+        await this.store.update(record.request_id, { plan, results, status });
       } catch (err) {
         console.error('[runner] request execution failed', {
           request_id: record.request_id,
@@ -91,7 +78,7 @@ export class InProcessRunner {
     }
   }
 
-  private async processRunning(): Promise<void> {
+  async processRunning() {
     const running = await this.store.listByStatus(
       ['running'],
       this.opts.maxBatchSize ?? 50
@@ -99,7 +86,7 @@ export class InProcessRunner {
     for (const record of running) {
       try {
         if (!record.plan || !record.results) continue;
-        const updatedResults: TaskResult[] = [...record.results];
+        const updatedResults = [...record.results];
         let changed = false;
         for (let i = 0; i < updatedResults.length; i++) {
           const r = updatedResults[i];
@@ -145,24 +132,19 @@ export class InProcessRunner {
   }
 }
 
-function rollupRequestStatus(
-  plan: { tasks: ExecutionTask[] },
-  results?: TaskResult[]
-): RequestStatus {
-  const taskResults = results ?? [];
-  if (taskResults.some(r => r.status === 'failed')) return 'failed';
+function rollupRequestStatus(plan, results = []) {
+  if (results.some(r => r.status === 'failed')) return 'failed';
   if (
-    plan.tasks.length > 0 &&
-    plan.tasks.every(
-      t =>
-        taskResults.find(r => r.task_id === t.id)?.status ===
-        'succeeded'
+    (plan.tasks ?? []).length > 0 &&
+    (plan.tasks ?? []).every(
+      t => results.find(r => r.task_id === t.id)?.status === 'succeeded'
     )
   ) {
     return 'executed';
   }
-  if (taskResults.some(r => r.status === 'running' || r.status === 'queued')) {
+  if (results.some(r => r.status === 'running' || r.status === 'queued')) {
     return 'running';
   }
   return 'executed';
 }
+

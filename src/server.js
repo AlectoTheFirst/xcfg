@@ -1,32 +1,30 @@
-import http from 'http';
-import { randomUUID } from 'crypto';
-import { resolve } from 'path';
-import { fileURLToPath } from 'url';
+import http from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { createDefaultEngine } from './index.js';
 import { ConsoleAuditSink } from './core/audit.js';
 import { InMemoryRequestStore } from './core/requestStore.js';
 import { SQLiteAuditSink } from './core/sqliteAuditSink.js';
 import { SQLiteRequestStore } from './core/sqliteRequestStore.js';
 import { InProcessRunner } from './core/runner.js';
-import type { XCFGEnvelope } from './core/envelope.js';
+import { isXcfgEnvelope } from './core/envelope.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
-import type { TaskResult, TaskStatus } from './core/plan.js';
+import { isTaskStatus } from './core/plan.js';
 
 const telemetry = new ConsoleTelemetry();
 const useMemoryStore = process.env.XCFG_STORE === 'memory';
 const dbPath = process.env.XCFG_DB_PATH ?? 'data/xcfg.db';
-const store = useMemoryStore
-  ? new InMemoryRequestStore()
-  : new SQLiteRequestStore(dbPath);
-const auditSink = useMemoryStore
-  ? new ConsoleAuditSink()
-  : new SQLiteAuditSink(dbPath);
+
+const store = useMemoryStore ? new InMemoryRequestStore() : new SQLiteRequestStore(dbPath);
+const auditSink = useMemoryStore ? new ConsoleAuditSink() : new SQLiteAuditSink(dbPath);
 const engine = createDefaultEngine({ telemetry, audit: auditSink });
 const runner = new InProcessRunner(engine, store);
 
 const requiredApiKey = process.env.XCFG_API_KEY;
 
-function isAuthorized(req: http.IncomingMessage): boolean {
+function isAuthorized(req) {
   if (!requiredApiKey) return true;
   const headerKey = req.headers['x-api-key'];
   if (typeof headerKey === 'string' && headerKey === requiredApiKey) {
@@ -40,7 +38,7 @@ function isAuthorized(req: http.IncomingMessage): boolean {
   return false;
 }
 
-function sendJson(res: http.ServerResponse, status: number, body: unknown) {
+function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json',
@@ -49,8 +47,8 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   res.end(payload);
 }
 
-async function readBody(req: http.IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
+async function readBody(req) {
+  const chunks = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw) return {};
@@ -59,28 +57,6 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
   } catch {
     throw new Error('Invalid JSON body');
   }
-}
-
-function isEnvelope(body: any): body is XCFGEnvelope {
-  return (
-    body &&
-    body.api_version === '1' &&
-    typeof body.type === 'string' &&
-    typeof body.type_version === 'string' &&
-    typeof body.operation === 'string' &&
-    typeof body.idempotency_key === 'string' &&
-    'payload' in body
-  );
-}
-
-function isTaskStatus(value: any): value is TaskStatus {
-  return (
-    value === 'queued' ||
-    value === 'running' ||
-    value === 'succeeded' ||
-    value === 'failed' ||
-    value === 'canceled'
-  );
 }
 
 export const server = http.createServer(async (req, res) => {
@@ -115,16 +91,15 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/v1/requests') {
       const body = await readBody(req);
-      if (!isEnvelope(body)) {
+      if (!isXcfgEnvelope(body)) {
         return sendJson(res, 400, {
           error: 'Invalid envelope',
-          hint: 'Check api_version/type/type_version/operation/idempotency_key/payload'
+          hint:
+            'Check api_version/type/type_version/operation/idempotency_key/payload'
         });
       }
 
-      const existing = await store.findByIdempotencyKey(
-        body.idempotency_key
-      );
+      const existing = await store.findByIdempotencyKey(body.idempotency_key);
       if (existing) {
         return sendJson(res, 202, {
           request_id: existing.request_id,
@@ -162,8 +137,8 @@ export const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname.startsWith('/v1/callbacks/')) {
-      const backend = url.pathname.split('/').pop()!;
-      const body = (await readBody(req)) as any;
+      const backend = url.pathname.split('/').pop();
+      const body = await readBody(req);
       const external_id = body?.external_id;
       if (typeof external_id !== 'string' || !external_id) {
         return sendJson(res, 400, { error: 'external_id is required' });
@@ -179,12 +154,10 @@ export const server = http.createServer(async (req, res) => {
         return sendJson(res, 404, { error: 'Request not found' });
       }
 
-      const status: TaskStatus = isTaskStatus(body.status)
-        ? body.status
-        : 'running';
+      const status = isTaskStatus(body.status) ? body.status : 'running';
 
       const now = new Date().toISOString();
-      const results: TaskResult[] = [...(record.results ?? [])];
+      const results = [...(record.results ?? [])];
       const idx = results.findIndex(r => r.task_id === ref.task_id);
       if (idx >= 0) {
         results[idx] = {
@@ -217,8 +190,8 @@ export const server = http.createServer(async (req, res) => {
         requestStatus = 'failed';
       } else if (
         planTasks.length > 0 &&
-        planTasks.every(t =>
-          results.find(r => r.task_id === t.id)?.status === 'succeeded'
+        planTasks.every(
+          t => results.find(r => r.task_id === t.id)?.status === 'succeeded'
         )
       ) {
         requestStatus = 'executed';
@@ -260,7 +233,7 @@ export const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/v1/requests/')) {
-      const request_id = url.pathname.split('/').pop()!;
+      const request_id = url.pathname.split('/').pop();
       const record = await store.get(request_id);
       if (!record) return sendJson(res, 404, { error: 'Not found' });
       return sendJson(res, 200, record);
@@ -276,12 +249,11 @@ export const server = http.createServer(async (req, res) => {
 export function start(port = 8080) {
   runner.start();
   server.listen(port, () => {
-    // eslint-disable-next-line no-console
     console.log(`xcfg server listening on :${port}`);
   });
 }
 
-function isMainModule(): boolean {
+function isMainModule() {
   try {
     if (!process.argv[1]) return false;
     return resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -298,3 +270,4 @@ const shouldStart =
 if (shouldStart) {
   start(Number(process.env.PORT) || 8080);
 }
+

@@ -1,32 +1,12 @@
-import { mkdirSync } from 'fs';
-import { dirname } from 'path';
-import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
-import type {
-  RequestRecord,
-  RequestStore,
-  TaskExternalRef
-} from './requestStore.js';
-import type { RequestStatus } from './engine.js';
-
-type DBRow = {
-  request_id: string;
-  idempotency_key: string;
-  envelope_json: string;
-  plan_json: string | null;
-  results_json: string | null;
-  status: RequestStatus;
-  created_at: string;
-  updated_at: string;
-};
-
-export class SQLiteRequestStore implements RequestStore {
-  private db: Database.Database;
-
+export class SQLiteRequestStore {
   constructor(dbPath = 'data/xcfg.db') {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS requests (
         request_id TEXT PRIMARY KEY,
@@ -52,7 +32,7 @@ export class SQLiteRequestStore implements RequestStore {
     `);
   }
 
-  async create(record: RequestRecord): Promise<void> {
+  async create(record) {
     const insert = this.db.prepare(
       `INSERT INTO requests
         (request_id, idempotency_key, envelope_json, plan_json, results_json, status, created_at, updated_at)
@@ -72,13 +52,10 @@ export class SQLiteRequestStore implements RequestStore {
     this.reindexExternalRefs(record.request_id, record.results);
   }
 
-  async update(
-    request_id: string,
-    patch: Partial<Omit<RequestRecord, 'request_id' | 'created_at'>>
-  ): Promise<void> {
+  async update(request_id, patch) {
     const existing = await this.get(request_id);
     if (!existing) return;
-    const updated: RequestRecord = {
+    const updated = {
       ...existing,
       ...patch,
       updated_at: new Date().toISOString()
@@ -102,31 +79,26 @@ export class SQLiteRequestStore implements RequestStore {
       status: updated.status,
       updated_at: updated.updated_at
     });
-    if (patch.results) {
+    if (patch?.results) {
       this.reindexExternalRefs(request_id, patch.results);
     }
   }
 
-  async get(request_id: string): Promise<RequestRecord | undefined> {
+  async get(request_id) {
     const row = this.db
       .prepare(`SELECT * FROM requests WHERE request_id = ?`)
-      .get(request_id) as DBRow | undefined;
+      .get(request_id);
     return row ? this.deserializeRow(row) : undefined;
   }
 
-  async findByIdempotencyKey(
-    idempotency_key: string
-  ): Promise<RequestRecord | undefined> {
+  async findByIdempotencyKey(idempotency_key) {
     const row = this.db
       .prepare(`SELECT * FROM requests WHERE idempotency_key = ?`)
-      .get(idempotency_key) as DBRow | undefined;
+      .get(idempotency_key);
     return row ? this.deserializeRow(row) : undefined;
   }
 
-  async listByStatus(
-    statuses: RequestStatus[],
-    limit = 100
-  ): Promise<RequestRecord[]> {
+  async listByStatus(statuses, limit = 100) {
     if (statuses.length === 0) return [];
     const placeholders = statuses.map(() => '?').join(',');
     const rows = this.db
@@ -136,25 +108,22 @@ export class SQLiteRequestStore implements RequestStore {
          ORDER BY created_at ASC
          LIMIT ?`
       )
-      .all(...statuses, limit) as DBRow[];
+      .all(...statuses, limit);
     return rows.map(r => this.deserializeRow(r));
   }
 
-  async findTaskByExternalId(
-    backend: string,
-    external_id: string
-  ): Promise<TaskExternalRef | undefined> {
+  async findTaskByExternalId(backend, external_id) {
     const row = this.db
       .prepare(
         `SELECT request_id, task_id, backend, external_id
          FROM external_refs
          WHERE backend = ? AND external_id = ?`
       )
-      .get(backend, external_id) as TaskExternalRef | undefined;
-    return row;
+      .get(backend, external_id);
+    return row ?? undefined;
   }
 
-  private deserializeRow(row: DBRow): RequestRecord {
+  deserializeRow(row) {
     return {
       request_id: row.request_id,
       envelope: JSON.parse(row.envelope_json),
@@ -166,10 +135,7 @@ export class SQLiteRequestStore implements RequestStore {
     };
   }
 
-  private reindexExternalRefs(
-    request_id: string,
-    results?: RequestRecord['results']
-  ): void {
+  reindexExternalRefs(request_id, results) {
     this.db
       .prepare(`DELETE FROM external_refs WHERE request_id = ?`)
       .run(request_id);

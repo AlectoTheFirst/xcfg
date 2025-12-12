@@ -1,42 +1,20 @@
-import { randomUUID } from 'crypto';
-import { performance } from 'perf_hooks';
-import type { XCFGEnvelope } from './envelope.js';
-import type { ExecutionPlan, ExecutionTask, TaskResult, TaskStatus } from './plan.js';
-import type { AuditSink } from './audit.js';
-import { Registry } from './registry.js';
-import type { Telemetry } from './telemetry.js';
+import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+
 import { NoopTelemetry } from './telemetry.js';
 
-export type RequestStatus = 'planned' | 'queued' | 'running' | 'executed' | 'failed';
-
-export interface HandleOptions {
-  request_id?: string;
-  execute?: boolean;
-}
-
-export interface HandleResult {
-  request_id: string;
-  plan: ExecutionPlan;
-  results?: TaskResult[];
-  status: RequestStatus;
-}
-
 export class XCFGEngine {
-  constructor(
-    private registry: Registry,
-    private audit: AuditSink,
-    private telemetry: Telemetry = NoopTelemetry
-  ) {}
+  constructor(registry, audit, telemetry = NoopTelemetry) {
+    this.registry = registry;
+    this.audit = audit;
+    this.telemetry = telemetry;
+  }
 
-  getAdapter(name: string) {
+  getAdapter(name) {
     return this.registry.getAdapter(name);
   }
 
-  async executePlan(
-    request_id: string,
-    envelope: XCFGEnvelope,
-    plan: ExecutionPlan
-  ): Promise<{ results: TaskResult[]; status: RequestStatus }> {
+  async executePlan(request_id, envelope, plan) {
     const span = this.telemetry.tracer.startSpan('xcfg.execute_plan', {
       request_id,
       type: envelope.type,
@@ -45,8 +23,8 @@ export class XCFGEngine {
     });
     const start = performance.now();
 
-    const results: TaskResult[] = [];
-    const orderedTasks = this.topoSortTasks(plan.tasks);
+    const results = [];
+    const orderedTasks = this.topoSortTasks(plan.tasks ?? []);
     for (const task of orderedTasks) {
       const taskSpan = this.telemetry.tracer.startSpan('xcfg.task.execute', {
         request_id,
@@ -55,7 +33,7 @@ export class XCFGEngine {
         action: task.action
       });
       const taskStart = performance.now();
-      let taskOutcome: TaskStatus = 'failed';
+      let taskOutcome = 'failed';
       this.telemetry.metrics.incCounter('xcfg_tasks_total', 1, {
         backend: task.backend,
         action: task.action
@@ -126,8 +104,7 @@ export class XCFGEngine {
           taskSpan.end('ok');
         }
       } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : String(err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
         taskOutcome = 'failed';
         results.push({
           task_id: task.id,
@@ -176,13 +153,10 @@ export class XCFGEngine {
     return { results, status };
   }
 
-  async handle(
-    envelope: XCFGEnvelope,
-    opts: HandleOptions = {}
-  ): Promise<HandleResult> {
+  async handle(envelope, opts = {}) {
     const request_id = opts.request_id ?? randomUUID();
-    const executeNow =
-      opts.execute ?? (envelope.operation === 'apply');
+    const executeNow = opts.execute ?? envelope.operation === 'apply';
+
     const requestSpan = this.telemetry.tracer.startSpan('xcfg.handle', {
       request_id,
       type: envelope.type,
@@ -227,10 +201,7 @@ export class XCFGEngine {
 
       if (translator.validate) {
         try {
-          await translator.validate(
-            { request_id, envelope },
-            envelope.payload as any
-          );
+          await translator.validate({ request_id, envelope }, envelope.payload);
           await this.audit.write({
             request_id,
             timestamp: new Date().toISOString(),
@@ -239,8 +210,7 @@ export class XCFGEngine {
             message: 'Payload validated'
           });
         } catch (err) {
-          const errorMessage =
-            err instanceof Error ? err.message : String(err);
+          const errorMessage = err instanceof Error ? err.message : String(err);
           await this.audit.write({
             request_id,
             timestamp: new Date().toISOString(),
@@ -271,8 +241,7 @@ export class XCFGEngine {
       });
 
       if (!executeNow) {
-        const status: RequestStatus =
-          envelope.operation === 'apply' ? 'queued' : 'planned';
+        const status = envelope.operation === 'apply' ? 'queued' : 'planned';
         this.telemetry.metrics.observeHistogram(
           'xcfg_request_duration_ms',
           performance.now() - requestStart,
@@ -286,11 +255,7 @@ export class XCFGEngine {
         return { request_id, plan, status };
       }
 
-      const { results, status } = await this.executePlan(
-        request_id,
-        envelope,
-        plan
-      );
+      const { results, status } = await this.executePlan(request_id, envelope, plan);
       this.telemetry.metrics.observeHistogram(
         'xcfg_request_duration_ms',
         performance.now() - requestStart,
@@ -330,14 +295,12 @@ export class XCFGEngine {
     }
   }
 
-  private rollupStatus(plan: ExecutionPlan, results: TaskResult[]): RequestStatus {
+  rollupStatus(plan, results) {
     const hasFailed = results.some(r => r.status === 'failed');
     const allSucceeded =
-      plan.tasks.length > 0 &&
-      plan.tasks.every(
-        t =>
-          results.find(r => r.task_id === t.id)?.status ===
-          'succeeded'
+      (plan.tasks ?? []).length > 0 &&
+      (plan.tasks ?? []).every(
+        t => results.find(r => r.task_id === t.id)?.status === 'succeeded'
       );
     const anyRunning = results.some(
       r => r.status === 'running' || r.status === 'queued'
@@ -352,17 +315,14 @@ export class XCFGEngine {
           : 'executed';
   }
 
-  private topoSortTasks(tasks: ExecutionTask[]): ExecutionTask[] {
+  topoSortTasks(tasks) {
     if (tasks.length <= 1) return tasks;
 
-    const byId = new Map<string, ExecutionTask>();
-    for (const t of tasks) {
-      byId.set(t.id, t);
-    }
+    const byId = new Map();
+    for (const t of tasks) byId.set(t.id, t);
 
-    const indegree = new Map<string, number>();
-    const out = new Map<string, string[]>();
-
+    const indegree = new Map();
+    const out = new Map();
     for (const t of tasks) {
       indegree.set(t.id, 0);
       out.set(t.id, []);
@@ -372,23 +332,21 @@ export class XCFGEngine {
       const deps = t.depends_on ?? [];
       for (const dep of deps) {
         if (!byId.has(dep)) {
-          throw new Error(
-            `Task ${t.id} depends on missing task ${dep}`
-          );
+          throw new Error(`Task ${t.id} depends on missing task ${dep}`);
         }
         indegree.set(t.id, (indegree.get(t.id) ?? 0) + 1);
-        out.get(dep)!.push(t.id);
+        out.get(dep).push(t.id);
       }
     }
 
-    const queue: string[] = [];
+    const queue = [];
     for (const [id, deg] of indegree.entries()) {
       if (deg === 0) queue.push(id);
     }
 
-    const ordered: ExecutionTask[] = [];
+    const ordered = [];
     while (queue.length > 0) {
-      const id = queue.shift()!;
+      const id = queue.shift();
       const task = byId.get(id);
       if (task) ordered.push(task);
       for (const next of out.get(id) ?? []) {
@@ -404,3 +362,4 @@ export class XCFGEngine {
     return ordered;
   }
 }
+
