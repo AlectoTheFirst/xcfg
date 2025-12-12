@@ -1,0 +1,36 @@
+export * from './core/envelope.js';
+export * from './core/translator.js';
+export * from './core/adapter.js';
+export * from './core/plan.js';
+export * from './core/registry.js';
+export * from './core/audit.js';
+export * from './core/engine.js';
+export * from './core/requestStore.js';
+export * from './core/telemetry.js';
+
+import { Registry } from './core/registry.js';
+import { UCEEngine } from './core/engine.js';
+import type { AuditSink } from './core/audit.js';
+import { ConsoleAuditSink } from './core/audit.js';
+import { firewallRuleChangeTranslator } from './examples/translators/firewallRuleChange.js';
+import { checkpointAdapter } from './examples/adapters/checkpointAdapter.js';
+import type { Telemetry } from './core/telemetry.js';
+import { ConsoleTelemetry } from './core/telemetry.js';
+
+export interface DefaultEngineOptions {
+  audit?: AuditSink;
+  telemetry?: Telemetry;
+}
+
+export function createDefaultEngine(
+  opts: DefaultEngineOptions = {}
+): UCEEngine {
+  const registry = new Registry();
+  registry.registerTranslator(firewallRuleChangeTranslator);
+  registry.registerAdapter(checkpointAdapter);
+  return new UCEEngine(
+    registry,
+    opts.audit ?? new ConsoleAuditSink(),
+    opts.telemetry ?? new ConsoleTelemetry()
+  );
+}
