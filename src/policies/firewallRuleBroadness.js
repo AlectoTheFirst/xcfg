@@ -1,19 +1,28 @@
 /**
- * Policy: prevent overly broad firewall allow rules with "ANY" service.
+ * Firewall guardrail policies (POC).
  *
- * This is intentionally opinionated and simple for the POC.
- * It evaluates the translated plan so it can work consistently across backends.
+ * These policies are intentionally simple and primarily operate on:
+ * - the translated plan (backend-neutral)
+ * - explicit payload fields (e.g., CIDRs)
+ *
+ * Real deployments typically need resolution (object/group → CIDR, service objects, zones),
+ * which can be layered in later via a SoT/lookup step before policy evaluation.
  */
 
 /**
- * @param {{ mode: 'disabled'|'warn'|'enforce', anyMinPrefixLen: number }} opts
+ * Deny/warn on allow rules using ANY service for broad networks.
+ *
+ * If `anyMinPrefixLen` is `undefined`, ANY service is always considered a violation.
+ *
+ * @param {{ mode: 'disabled'|'warn'|'enforce', anyMinPrefixLen: (number|undefined), requireExplicitAny: boolean }} opts
  */
-export function firewallRuleBroadnessPolicy(opts) {
+export function firewallAllowAnyServicePolicy(opts) {
   const mode = opts.mode;
   const anyMinPrefixLen = opts.anyMinPrefixLen;
+  const requireExplicitAny = opts.requireExplicitAny;
 
   return {
-    id: 'firewall-rule-broadness',
+    id: 'firewall-allow-any-service',
 
     evaluate(ctx) {
       if (mode === 'disabled') return [];
@@ -33,7 +42,8 @@ export function firewallRuleBroadnessPolicy(opts) {
         if (rule.action !== 'allow') continue;
 
         const services = Array.isArray(rule.services) ? rule.services : [];
-        const anyService = services.some(serviceIsAny);
+        const classification = classifyServices(services);
+        const anyService = requireExplicitAny ? classification.any : classification.any || classification.unknown;
         if (!anyService) continue;
 
         const sourceCidrs = extractCidrs(rule.source);
@@ -43,18 +53,23 @@ export function firewallRuleBroadnessPolicy(opts) {
         const broadDest = findBroadestCidr(destCidrs);
 
         const sourceTooBroad =
-          broadSource && broadSource.prefix < anyMinPrefixLen;
-        const destTooBroad = broadDest && broadDest.prefix < anyMinPrefixLen;
+          anyMinPrefixLen === undefined
+            ? true
+            : !!(broadSource && broadSource.prefix < anyMinPrefixLen);
+        const destTooBroad =
+          anyMinPrefixLen === undefined
+            ? true
+            : !!(broadDest && broadDest.prefix < anyMinPrefixLen);
 
         if (!sourceTooBroad && !destTooBroad) continue;
 
         const effect = mode === 'enforce' ? 'deny' : 'warn';
-        const threshold = `/${anyMinPrefixLen}`;
+        const threshold = anyMinPrefixLen === undefined ? 'any' : `/${anyMinPrefixLen}`;
         const message = [
           'Firewall allow rule too broad with ANY service',
-          sourceTooBroad ? `src=${broadSource.cidr}` : undefined,
-          destTooBroad ? `dst=${broadDest.cidr}` : undefined,
-          `min_prefix=${threshold}`
+          sourceTooBroad ? `src=${broadSource?.cidr ?? 'unknown'}` : undefined,
+          destTooBroad ? `dst=${broadDest?.cidr ?? 'unknown'}` : undefined,
+          `threshold=${threshold}`
         ]
           .filter(Boolean)
           .join(' ');
@@ -67,7 +82,8 @@ export function firewallRuleBroadnessPolicy(opts) {
             rule_name: rule.name,
             source_broadest: broadSource,
             destination_broadest: broadDest,
-            anyMinPrefixLen
+            anyMinPrefixLen,
+            requireExplicitAny
           }
         });
       }
@@ -77,23 +93,49 @@ export function firewallRuleBroadnessPolicy(opts) {
   };
 }
 
-function serviceIsAny(service) {
-  if (!service || typeof service !== 'object') return true;
-  if (service.any === true) return true;
+/**
+ * Deny/warn on ambiguous/unknown service entries (to prevent accidental "ANY").
+ * @param {{ mode: 'disabled'|'warn'|'enforce' }} opts
+ */
+export function firewallUnknownServicePolicy(opts) {
+  const mode = opts.mode;
 
-  const protocol = typeof service.protocol === 'string' ? service.protocol : '';
-  if (!protocol) return true;
-  if (protocol.toLowerCase() === 'any' || protocol === '*') return true;
+  return {
+    id: 'firewall-unknown-service',
 
-  if (typeof service.port === 'number') {
-    return service.port <= 0;
-  }
-  if (typeof service.port === 'string') {
-    const p = service.port.trim().toLowerCase();
-    return p === 'any' || p === '*' || p === '';
-  }
+    evaluate(ctx) {
+      if (mode === 'disabled') return [];
+      const envelope = ctx.envelope;
+      if (!envelope || envelope.type !== 'firewall-rule-change') return [];
 
-  return true;
+      const planTasks = ctx.plan?.tasks ?? [];
+      const ruleTasks = planTasks.filter(
+        t => typeof t?.action === 'string' && t.action.startsWith('firewall.rule.')
+      );
+
+      const violations = [];
+      for (const task of ruleTasks) {
+        const input = task?.input ?? envelope.payload;
+        const rule = input?.rule;
+        if (!rule || typeof rule !== 'object') continue;
+        if (rule.action !== 'allow') continue;
+
+        const services = Array.isArray(rule.services) ? rule.services : [];
+        const classification = classifyServices(services);
+        if (!classification.unknown) continue;
+
+        const effect = mode === 'enforce' ? 'deny' : 'warn';
+        violations.push({
+          id: 'firewall-service-unknown',
+          effect,
+          message: 'Firewall allow rule has unknown/ambiguous service entries',
+          data: { rule_name: rule.name }
+        });
+      }
+
+      return violations;
+    }
+  };
 }
 
 function extractCidrs(endpoints) {
@@ -147,4 +189,74 @@ function isValidIpv4(ip) {
     if (!Number.isInteger(value) || value < 0 || value > 255) return false;
   }
   return true;
+}
+
+function classifyServices(services) {
+  const result = { any: false, unknown: false };
+
+  if (!Array.isArray(services) || services.length === 0) {
+    result.unknown = true;
+    return result;
+  }
+
+  const noPortProtocols = new Set(['icmp', 'gre', 'esp', 'ah', 'ip']);
+
+  for (const service of services) {
+    if (!service || typeof service !== 'object') {
+      result.unknown = true;
+      continue;
+    }
+
+    if (service.any === true) {
+      result.any = true;
+      continue;
+    }
+
+    if (hasNonEmptyString(service.service_id) || hasNonEmptyString(service.name)) {
+      continue;
+    }
+
+    const protocol = hasNonEmptyString(service.protocol)
+      ? String(service.protocol).trim().toLowerCase()
+      : '';
+    const port = service.port;
+
+    if (protocol === 'any' || protocol === '*') {
+      result.any = true;
+      continue;
+    }
+
+    if (portIsAny(port)) {
+      result.any = true;
+      continue;
+    }
+
+    const hasProtocol = protocol !== '';
+    const hasPort = port !== undefined && port !== null && String(port).trim() !== '';
+
+    if (hasProtocol && !hasPort && noPortProtocols.has(protocol)) {
+      continue;
+    }
+
+    if (hasProtocol && hasPort) {
+      continue;
+    }
+
+    result.unknown = true;
+  }
+
+  return result;
+}
+
+function portIsAny(port) {
+  if (typeof port === 'number') return port <= 0;
+  if (typeof port === 'string') {
+    const p = port.trim().toLowerCase();
+    return p === 'any' || p === '*' || p === '';
+  }
+  return false;
+}
+
+function hasNonEmptyString(value) {
+  return typeof value === 'string' && value.trim() !== '';
 }

@@ -181,7 +181,11 @@ export const server = http.createServer(async (req, res) => {
         execute: false
       });
 
-      const policy = await createPolicyEngine(policyConfig, body).evaluate({
+      const policy = await createPolicyEngine(
+        policyConfig,
+        body,
+        handleResult.plan
+      ).evaluate({
         request_id,
         envelope: body,
         plan: handleResult.plan

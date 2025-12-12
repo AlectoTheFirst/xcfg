@@ -2,9 +2,17 @@
   "default": {
     "mode": "enforce",
     "firewall": {
-      "any_min_prefixlen": 16
+      "allow_rules": {
+        "any_service": {
+          "mode": "enforce",
+          "min_prefixlen": 16,
+          "require_explicit": true
+        },
+        "unknown_service": {
+          "mode": "warn"
+        }
+      }
     }
   },
-  "environments": {}
+  "profiles": []
 }
-

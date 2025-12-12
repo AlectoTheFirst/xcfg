@@ -22,7 +22,10 @@ This approach keeps policy logic independent of backend vendors and lets you rea
 
 ## Current Built-in Policy (POC)
 
-Rule: deny (or warn on) firewall allow rules that are too broad with **ANY** service.
+Rules (POC):
+
+- **ANY service broadness**: deny/warn on firewall allow rules that use **ANY** service and are too broad (based on CIDR prefix length).
+- **Unknown services**: warn/deny when a firewall allow rule contains ambiguous/unknown service entries (to prevent accidental “ANY”).
 
 Example that should be denied:
 
@@ -43,16 +46,41 @@ Default path: `config/policy.json`
 {
   "default": {
     "mode": "enforce",
-    "firewall": { "any_min_prefixlen": 16 }
+    "firewall": {
+      "allow_rules": {
+        "any_service": { "mode": "enforce", "min_prefixlen": 16 },
+        "unknown_service": { "mode": "warn" }
+      }
+    }
   },
-  "environments": {
-    "prod": { "mode": "enforce", "firewall": { "any_min_prefixlen": 24 } },
-    "dev": { "mode": "warn", "firewall": { "any_min_prefixlen": 16 } }
-  }
+  "profiles": [
+    {
+      "name": "prod-untrust-strict",
+      "priority": 100,
+      "match": { "environment": "prod", "tags.zone": "untrust" },
+      "override": {
+        "firewall": {
+          "allow_rules": { "any_service": { "min_prefixlen": 24, "mode": "enforce" } }
+        }
+      }
+    },
+    {
+      "name": "mgmt-zone-lenient",
+      "priority": 200,
+      "match": { "tags.zone": "mgmt" },
+      "override": {
+        "firewall": {
+          "allow_rules": { "any_service": { "mode": "disabled" } }
+        }
+      }
+    }
+  ]
 }
 ```
 
-xcfg selects a profile using:
+xcfg can “pin” different policy behavior to metadata via `profiles[].match`.
+
+xcfg computes `environment` using:
 
 - `envelope.tags.environment` (preferred)
 - otherwise `envelope.target.environment`
@@ -60,8 +88,31 @@ xcfg selects a profile using:
 
 ### Fields
 
-- `mode`: `enforce | warn | disabled`
-- `firewall.any_min_prefixlen`: if ANY-service is requested, any source/destination CIDR broader than `/<min_prefixlen>` is considered too broad (e.g., `/8` is broader than `/16`).
+- `default.mode`: global fallback `enforce | warn | disabled`
+- `profiles[]`: optional overrides based on metadata matchers
+  - `name`: label (for audit/debug)
+  - `priority`: higher numbers apply later (override wins)
+  - `match`: key/value matchers (AND)
+  - `override`: partial settings to merge into `default`
+
+Firewall guardrails:
+
+- `firewall.allow_rules.any_service.mode`: `enforce | warn | disabled`
+- `firewall.allow_rules.any_service.min_prefixlen`: if ANY-service is requested, any source/destination CIDR broader than `/<min_prefixlen>` is considered too broad (e.g., `/8` is broader than `/16`)
+  - Set to `null` to treat ANY service as a violation regardless of CIDR size.
+- `firewall.allow_rules.any_service.require_explicit`: default `true`; if `true`, only explicitly-specified ANY is treated as ANY (unknown service entries are handled by `unknown_service`)
+- `firewall.allow_rules.unknown_service.mode`: `warn | enforce | disabled`
+
+### Match Keys (POC)
+
+Common match keys:
+
+- `environment` (computed from envelope)
+- `type`, `type_version`, `operation`
+- `tags.<key>` (e.g., `tags.zone`, `tags.business_unit`)
+- `target.<key>` (e.g., `target.backend_hint`)
+- `plan.backends` (array of backends in the translated plan)
+- `plan.actions` (array of actions in the translated plan)
 
 ## Extending Policies
 
