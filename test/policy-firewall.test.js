@@ -1,13 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDefaultPolicyEngine } from '../src/policies/index.js';
+import { createPolicyEngine } from '../src/policies/index.js';
 
 test('policy denies broad firewall allow with ANY service', async () => {
-  const policy = createDefaultPolicyEngine({
-    XCFG_POLICY_MODE: 'enforce',
-    XCFG_POLICY_FIREWALL_ANY_MAX_ADDRESSES: '65536'
-  });
+  const policy = createPolicyEngine(
+    {
+      default: {
+        mode: 'enforce',
+        firewall: { any_min_prefixlen: 16 }
+      }
+    },
+    { tags: { environment: 'prod' } }
+  );
 
   const ctx = {
     request_id: 'req-1',
@@ -42,10 +47,15 @@ test('policy denies broad firewall allow with ANY service', async () => {
 });
 
 test('policy warns (but allows) when mode=warn', async () => {
-  const policy = createDefaultPolicyEngine({
-    XCFG_POLICY_MODE: 'warn',
-    XCFG_POLICY_FIREWALL_ANY_MAX_ADDRESSES: '65536'
-  });
+  const policy = createPolicyEngine(
+    {
+      default: {
+        mode: 'warn',
+        firewall: { any_min_prefixlen: 16 }
+      }
+    },
+    { tags: { environment: 'dev' } }
+  );
 
   const result = await policy.evaluate({
     request_id: 'req-1',
@@ -74,4 +84,3 @@ test('policy warns (but allows) when mode=warn', async () => {
   assert.equal(result.violations.length, 1);
   assert.equal(result.violations[0].effect, 'warn');
 });
-

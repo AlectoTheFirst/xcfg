@@ -6,11 +6,11 @@
  */
 
 /**
- * @param {{ mode: 'disabled'|'warn'|'enforce', anyMaxAddresses: number }} opts
+ * @param {{ mode: 'disabled'|'warn'|'enforce', anyMinPrefixLen: number }} opts
  */
 export function firewallRuleBroadnessPolicy(opts) {
   const mode = opts.mode;
-  const anyMaxAddresses = opts.anyMaxAddresses;
+  const anyMinPrefixLen = opts.anyMinPrefixLen;
 
   return {
     id: 'firewall-rule-broadness',
@@ -43,17 +43,18 @@ export function firewallRuleBroadnessPolicy(opts) {
         const broadDest = findBroadestCidr(destCidrs);
 
         const sourceTooBroad =
-          broadSource && broadSource.addresses > anyMaxAddresses;
-        const destTooBroad = broadDest && broadDest.addresses > anyMaxAddresses;
+          broadSource && broadSource.prefix < anyMinPrefixLen;
+        const destTooBroad = broadDest && broadDest.prefix < anyMinPrefixLen;
 
         if (!sourceTooBroad && !destTooBroad) continue;
 
         const effect = mode === 'enforce' ? 'deny' : 'warn';
+        const threshold = `/${anyMinPrefixLen}`;
         const message = [
           'Firewall allow rule too broad with ANY service',
           sourceTooBroad ? `src=${broadSource.cidr}` : undefined,
           destTooBroad ? `dst=${broadDest.cidr}` : undefined,
-          `max_addresses=${anyMaxAddresses}`
+          `min_prefix=${threshold}`
         ]
           .filter(Boolean)
           .join(' ');
@@ -66,7 +67,7 @@ export function firewallRuleBroadnessPolicy(opts) {
             rule_name: rule.name,
             source_broadest: broadSource,
             destination_broadest: broadDest,
-            anyMaxAddresses
+            anyMinPrefixLen
           }
         });
       }
@@ -116,7 +117,7 @@ function findBroadestCidr(cidrs) {
   for (const cidr of cidrs) {
     const parsed = parseIpv4Cidr(cidr);
     if (!parsed) continue;
-    if (!best || parsed.addresses > best.addresses) best = parsed;
+    if (!best || parsed.prefix < best.prefix) best = parsed;
   }
   return best;
 }
@@ -132,8 +133,7 @@ function parseIpv4Cidr(cidr) {
   if (!isValidIpv4(ip)) return undefined;
   const prefix = Number(prefixStr);
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return undefined;
-  const addresses = 2 ** (32 - prefix);
-  return { cidr: `${ip}/${prefix}`, prefix, addresses };
+  return { cidr: `${ip}/${prefix}`, prefix };
 }
 
 function isValidIpv4(ip) {
@@ -148,4 +148,3 @@ function isValidIpv4(ip) {
   }
   return true;
 }
-

@@ -33,14 +33,35 @@ Example that should be denied:
 
 ## Configuration
 
-Environment variables:
+Policies are configured via a file so different environments can use different rules without relying on environment variables.
 
-- `XCFG_POLICY_MODE`
-  - `enforce` (default): deny requests that violate deny rules
-  - `warn`: do not block, but record audit events
-  - `disabled`: skip policy evaluation
-- `XCFG_POLICY_FIREWALL_ANY_MAX_ADDRESSES` (default `65536`)
-  - If ANY-service is requested, any source/destination CIDR larger than this is considered too broad.
+Default path: `config/policy.json`
+
+### Example
+
+```json
+{
+  "default": {
+    "mode": "enforce",
+    "firewall": { "any_min_prefixlen": 16 }
+  },
+  "environments": {
+    "prod": { "mode": "enforce", "firewall": { "any_min_prefixlen": 24 } },
+    "dev": { "mode": "warn", "firewall": { "any_min_prefixlen": 16 } }
+  }
+}
+```
+
+xcfg selects a profile using:
+
+- `envelope.tags.environment` (preferred)
+- otherwise `envelope.target.environment`
+  - This can be set by the caller (e.g., ServiceNow) as metadata and used for routing/policy selection.
+
+### Fields
+
+- `mode`: `enforce | warn | disabled`
+- `firewall.any_min_prefixlen`: if ANY-service is requested, any source/destination CIDR broader than `/<min_prefixlen>` is considered too broad (e.g., `/8` is broader than `/16`).
 
 ## Extending Policies
 
@@ -55,4 +76,3 @@ Future directions for production:
 - Policy-as-code engines (OPA/Rego, Cedar) running as a sidecar
 - Tenant-specific policy bundles and versioning
 - Policy simulation (“explain why denied”) and safe auto-remediation suggestions
-

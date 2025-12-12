@@ -11,7 +11,8 @@ import { isXcfgEnvelope } from './core/envelope.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
 import { isTaskStatus } from './core/plan.js';
 import { stableStringify } from './core/stableJson.js';
-import { createDefaultPolicyEngine } from './policies/index.js';
+import { readFile } from 'node:fs/promises';
+import { createPolicyEngine, DEFAULT_POLICY_CONFIG } from './policies/index.js';
 
 const telemetry = new ConsoleTelemetry();
 const storeKind = process.env.XCFG_STORE ?? 'memory';
@@ -20,7 +21,7 @@ const dbPath = process.env.XCFG_DB_PATH ?? 'data/xcfg.db';
 const { store, auditSink } = await createStorage(storeKind, dbPath);
 const engine = createDefaultEngine({ telemetry, audit: auditSink });
 const runner = new InProcessRunner(engine, store);
-const policyEngine = createDefaultPolicyEngine(process.env);
+const policyConfig = await loadPolicyConfig();
 
 const requiredApiKey = process.env.XCFG_API_KEY;
 
@@ -73,6 +74,16 @@ async function createStorage(kind, path) {
     store: new InMemoryRequestStore(),
     auditSink: new FanoutAuditSink([new ConsoleAuditSink(), memoryAudit])
   };
+}
+
+async function loadPolicyConfig() {
+  try {
+    const raw = await readFile('config/policy.json', 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : DEFAULT_POLICY_CONFIG;
+  } catch {
+    return DEFAULT_POLICY_CONFIG;
+  }
 }
 
 function fingerprintEnvelope(envelope) {
@@ -170,7 +181,7 @@ export const server = http.createServer(async (req, res) => {
         execute: false
       });
 
-      const policy = await policyEngine.evaluate({
+      const policy = await createPolicyEngine(policyConfig, body).evaluate({
         request_id,
         envelope: body,
         plan: handleResult.plan

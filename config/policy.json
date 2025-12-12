@@ -1,0 +1,10 @@
+{
+  "default": {
+    "mode": "enforce",
+    "firewall": {
+      "any_min_prefixlen": 16
+    }
+  },
+  "environments": {}
+}
+
