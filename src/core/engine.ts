@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
-import type { UCEEnvelope } from './envelope.js';
+import type { XCFGEnvelope } from './envelope.js';
 import type { ExecutionPlan, TaskResult, TaskStatus } from './plan.js';
 import type { AuditSink } from './audit.js';
 import { Registry } from './registry.js';
@@ -16,23 +16,23 @@ export interface HandleResult {
   status: RequestStatus;
 }
 
-export class UCEEngine {
+export class XCFGEngine {
   constructor(
     private registry: Registry,
     private audit: AuditSink,
     private telemetry: Telemetry = NoopTelemetry
   ) {}
 
-  async handle(envelope: UCEEnvelope): Promise<HandleResult> {
+  async handle(envelope: XCFGEnvelope): Promise<HandleResult> {
     const request_id = randomUUID();
-    const requestSpan = this.telemetry.tracer.startSpan('uce.handle', {
+    const requestSpan = this.telemetry.tracer.startSpan('xcfg.handle', {
       request_id,
       type: envelope.type,
       type_version: envelope.type_version,
       operation: envelope.operation
     });
     const requestStart = performance.now();
-    this.telemetry.metrics.incCounter('uce_requests_total', 1, {
+    this.telemetry.metrics.incCounter('xcfg_requests_total', 1, {
       type: envelope.type,
       operation: envelope.operation
     });
@@ -60,7 +60,7 @@ export class UCEEngine {
         stage: 'translate',
         message
       });
-      this.telemetry.metrics.incCounter('uce_requests_failed_total', 1, {
+      this.telemetry.metrics.incCounter('xcfg_requests_failed_total', 1, {
         type: envelope.type,
         reason: 'no_translator'
       });
@@ -82,7 +82,7 @@ export class UCEEngine {
 
     if (envelope.operation !== 'apply') {
       this.telemetry.metrics.observeHistogram(
-        'uce_request_duration_ms',
+        'xcfg_request_duration_ms',
         performance.now() - requestStart,
         {
           type: envelope.type,
@@ -96,7 +96,7 @@ export class UCEEngine {
 
     const results: TaskResult[] = [];
     for (const task of plan.tasks) {
-      const taskSpan = this.telemetry.tracer.startSpan('uce.task.execute', {
+      const taskSpan = this.telemetry.tracer.startSpan('xcfg.task.execute', {
         request_id,
         task_id: task.id,
         backend: task.backend,
@@ -104,7 +104,7 @@ export class UCEEngine {
       });
       const taskStart = performance.now();
       let taskOutcome: TaskStatus = 'failed';
-      this.telemetry.metrics.incCounter('uce_tasks_total', 1, {
+      this.telemetry.metrics.incCounter('xcfg_tasks_total', 1, {
         backend: task.backend,
         action: task.action
       });
@@ -126,12 +126,12 @@ export class UCEEngine {
           status: 'failed',
           error: { message }
         });
-        this.telemetry.metrics.incCounter('uce_tasks_failed_total', 1, {
+        this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
           backend: task.backend,
           reason: 'no_adapter'
         });
         this.telemetry.metrics.observeHistogram(
-          'uce_task_duration_ms',
+          'xcfg_task_duration_ms',
           performance.now() - taskStart,
           {
             backend: task.backend,
@@ -165,7 +165,7 @@ export class UCEEngine {
           data: result
         });
         if (result.status === 'failed') {
-          this.telemetry.metrics.incCounter('uce_tasks_failed_total', 1, {
+          this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
             backend: task.backend,
             reason: 'adapter_failed'
           });
@@ -191,7 +191,7 @@ export class UCEEngine {
           message: `Task ${task.id} failed`,
           data: { error: errorMessage }
         });
-        this.telemetry.metrics.incCounter('uce_tasks_failed_total', 1, {
+        this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
           backend: task.backend,
           reason: 'exception'
         });
@@ -199,7 +199,7 @@ export class UCEEngine {
         taskSpan.end('error');
       } finally {
         this.telemetry.metrics.observeHistogram(
-          'uce_task_duration_ms',
+          'xcfg_task_duration_ms',
           performance.now() - taskStart,
           {
             backend: task.backend,
@@ -214,7 +214,7 @@ export class UCEEngine {
       ? 'failed'
       : 'executed';
     this.telemetry.metrics.observeHistogram(
-      'uce_request_duration_ms',
+      'xcfg_request_duration_ms',
       performance.now() - requestStart,
       {
         type: envelope.type,
@@ -223,7 +223,7 @@ export class UCEEngine {
       }
     );
     if (status === 'failed') {
-      this.telemetry.metrics.incCounter('uce_requests_failed_total', 1, {
+      this.telemetry.metrics.incCounter('xcfg_requests_failed_total', 1, {
         type: envelope.type,
         operation: envelope.operation
       });
@@ -233,12 +233,12 @@ export class UCEEngine {
     }
     return { request_id, plan, results, status };
     } catch (err) {
-      this.telemetry.metrics.incCounter('uce_requests_failed_total', 1, {
+      this.telemetry.metrics.incCounter('xcfg_requests_failed_total', 1, {
         type: envelope.type,
         operation: envelope.operation
       });
       this.telemetry.metrics.observeHistogram(
-        'uce_request_duration_ms',
+        'xcfg_request_duration_ms',
         performance.now() - requestStart,
         {
           type: envelope.type,

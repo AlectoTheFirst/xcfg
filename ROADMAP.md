@@ -1,4 +1,4 @@
-# UCE Roadmap (near-term)
+# xcfg Roadmap (near-term)
 
 This is a living document. Versions are indicative.
 
@@ -43,4 +43,3 @@ This is a living document. Versions are indicative.
 - Prometheus metrics + SLO dashboards.
 - Append‑only audit/event store with immutability guarantees.
 - Multi‑tenant isolation and per‑tenant quotas.
-

@@ -1,10 +1,10 @@
-import type { UCEEnvelope } from './envelope.js';
+import type { XCFGEnvelope } from './envelope.js';
 import type { ExecutionPlan, TaskResult } from './plan.js';
 import type { RequestStatus } from './engine.js';
 
 export interface RequestRecord {
   request_id: string;
-  envelope: UCEEnvelope;
+  envelope: XCFGEnvelope;
   plan?: ExecutionPlan;
   results?: TaskResult[];
   status: RequestStatus;

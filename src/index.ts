@@ -9,7 +9,7 @@ export * from './core/requestStore.js';
 export * from './core/telemetry.js';
 
 import { Registry } from './core/registry.js';
-import { UCEEngine } from './core/engine.js';
+import { XCFGEngine } from './core/engine.js';
 import type { AuditSink } from './core/audit.js';
 import { ConsoleAuditSink } from './core/audit.js';
 import { firewallRuleChangeTranslator } from './examples/translators/firewallRuleChange.js';
@@ -24,11 +24,11 @@ export interface DefaultEngineOptions {
 
 export function createDefaultEngine(
   opts: DefaultEngineOptions = {}
-): UCEEngine {
+): XCFGEngine {
   const registry = new Registry();
   registry.registerTranslator(firewallRuleChangeTranslator);
   registry.registerAdapter(checkpointAdapter);
-  return new UCEEngine(
+  return new XCFGEngine(
     registry,
     opts.audit ?? new ConsoleAuditSink(),
     opts.telemetry ?? new ConsoleTelemetry()

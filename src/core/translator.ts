@@ -1,9 +1,9 @@
-import type { UCEEnvelope } from './envelope.js';
+import type { XCFGEnvelope } from './envelope.js';
 import type { ExecutionPlan } from './plan.js';
 
 export interface TranslationContext {
   request_id: string;
-  envelope: UCEEnvelope;
+  envelope: XCFGEnvelope;
 }
 
 export interface Translator<TPayload = unknown> {
@@ -12,4 +12,3 @@ export interface Translator<TPayload = unknown> {
   schema?: object;
   translate(ctx: TranslationContext, payload: TPayload): Promise<ExecutionPlan>;
 }
-

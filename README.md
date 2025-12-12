@@ -1,6 +1,6 @@
-# Universal Configuration Engine (UCE)
+# xcfg (Universal Configuration Engine)
 
-UCE is a translation and orchestration layer between intent-driven frontends (e.g., ServiceNow) and heterogeneous network backends (e.g., Check Point MDS, VMware/VeloCloud VCO, Zscaler, Nautobot, Infrahub, or other domain orchestrators).
+xcfg is a translation and orchestration layer between intent-driven frontends (e.g., ServiceNow) and heterogeneous network backends (e.g., Check Point MDS, VMware/VeloCloud VCO, Zscaler, Nautobot, Infrahub, or other domain orchestrators).
 
 The engine accepts a stable **intent envelope** from callers, validates/normalizes it, translates it into one or more backend-specific tasks, executes those tasks either statelessly or with durable state, and exposes full auditability, traceability, and monitoring.
 
@@ -12,7 +12,7 @@ The engine accepts a stable **intent envelope** from callers, validates/normaliz
 - **Statefulness on demand**: Some intents can be fully stateless; others persist state and reconcile with backends over time.
 - **Audit/Trace/Monitor everything**: Every request and task emits audit events with correlation IDs, timestamps, actors, inputs, outputs, and errors.
 
-## Stable Inbound API (ServiceNow → UCE)
+## Stable Inbound API (ServiceNow → xcfg)
 
 ### Endpoint
 
@@ -49,7 +49,7 @@ The engine accepts a stable **intent envelope** from callers, validates/normaliz
 
 #### Field Semantics
 
-- `api_version`: Version of the UCE envelope. Changes rarely.
+- `api_version`: Version of the xcfg envelope. Changes rarely.
 - `type`: High-level intent identifier. Stable and human-readable (kebab-case).
 - `type_version`: Schema/behavior version for this type. Use semantic versioning or integer major versions.
 - `operation`:
@@ -87,10 +87,10 @@ Backends can also send updates via callbacks (e.g., `POST /v1/callbacks/{backend
 ### Reverse Mapping / Callbacks
 
 Adapters should return an `external_id` for each task (job id, change id, rule uid, etc).  
-UCE persists a mapping `(backend, external_id) → (request_id, task_id)` so that:
+xcfg persists a mapping `(backend, external_id) → (request_id, task_id)` so that:
 
-- Backends can call UCE with async results.
-- UCE can poll/check status later.
+- Backends can call xcfg with async results.
+- xcfg can poll/check status later.
 - Frontends can trace a ServiceNow ticket to vendor-native objects.
 
 Generic callback endpoint:
@@ -106,7 +106,7 @@ Generic callback endpoint:
 }
 ```
 
-UCE will update the matching task and roll up request status.
+xcfg will update the matching task and roll up request status.
 
 ## Workflow / Visual Mapping (Future)
 
@@ -117,7 +117,7 @@ Execution Plans are DAGs of backend-neutral tasks. Translators can be:
 
 A visual workflow editor can sit on top of the same plan IR, letting operators
 drag/drop tasks, set dependencies, and publish a new `type_version` without
-changing engine code. This stays optional so UCE remains headless and testable.
+changing engine code. This stays optional so xcfg remains headless and testable.
 
 ### Example Payload: `firewall-rule-change` (v1)
 
@@ -162,4 +162,4 @@ This repo is currently a scaffold. Next steps are to add:
 - Real adapters for each backend.
 - OpenTelemetry tracing + Prometheus metrics.
 - Append-only audit/event store.
- - Declarative translator format + optional visual editor.
+- Declarative translator format + optional visual editor.

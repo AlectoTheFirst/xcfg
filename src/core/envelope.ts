@@ -1,4 +1,4 @@
-export type UCEOperation = 'plan' | 'apply' | 'validate' | 'rollback';
+export type XCFGOperation = 'plan' | 'apply' | 'validate' | 'rollback';
 
 export interface RequestedBy {
   system?: string;
@@ -14,11 +14,11 @@ export interface TargetHint {
   [key: string]: string | undefined;
 }
 
-export interface UCEEnvelope<TPayload = unknown> {
+export interface XCFGEnvelope<TPayload = unknown> {
   api_version: '1';
   type: string;
   type_version: string;
-  operation: UCEOperation;
+  operation: XCFGOperation;
   idempotency_key: string;
   correlation_id?: string;
   requested_by?: RequestedBy;
@@ -27,4 +27,3 @@ export interface UCEEnvelope<TPayload = unknown> {
   tags?: Record<string, string>;
   created_at?: string;
 }
-

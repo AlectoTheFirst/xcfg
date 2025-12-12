@@ -1,7 +1,7 @@
 import http from 'http';
 import { createDefaultEngine } from './index.js';
 import { InMemoryRequestStore } from './core/requestStore.js';
-import type { UCEEnvelope } from './core/envelope.js';
+import type { XCFGEnvelope } from './core/envelope.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
 import type { TaskResult, TaskStatus } from './core/plan.js';
 
@@ -30,7 +30,7 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
   }
 }
 
-function isEnvelope(body: any): body is UCEEnvelope {
+function isEnvelope(body: any): body is XCFGEnvelope {
   return (
     body &&
     body.api_version === '1' &&
@@ -186,10 +186,10 @@ export const server = http.createServer(async (req, res) => {
 export function start(port = 8080) {
   server.listen(port, () => {
     // eslint-disable-next-line no-console
-    console.log(`UCE server listening on :${port}`);
+    console.log(`xcfg server listening on :${port}`);
   });
 }
 
-if (process.env.UCE_AUTOSTART === '1') {
+if (process.env.XCFG_AUTOSTART === '1' || process.env.UCE_AUTOSTART === '1') {
   start(Number(process.env.PORT) || 8080);
 }
