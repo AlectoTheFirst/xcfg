@@ -17,6 +17,22 @@ const store =
 const runner = new InProcessRunner(engine, store);
 runner.start();
 
+const requiredApiKey = process.env.XCFG_API_KEY;
+
+function isAuthorized(req: http.IncomingMessage): boolean {
+  if (!requiredApiKey) return true;
+  const headerKey = req.headers['x-api-key'];
+  if (typeof headerKey === 'string' && headerKey === requiredApiKey) {
+    return true;
+  }
+  const auth = req.headers['authorization'];
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    const token = auth.slice('Bearer '.length);
+    return token === requiredApiKey;
+  }
+  return false;
+}
+
 function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -72,6 +88,10 @@ export const server = http.createServer(async (req, res) => {
       const snapshot =
         telemetry.metrics.snapshot?.() ?? { counters: {}, histograms: {} };
       return sendJson(res, 200, snapshot);
+    }
+
+    if (!isAuthorized(req)) {
+      return sendJson(res, 401, { error: 'Unauthorized' });
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/requests') {

@@ -10,5 +10,9 @@ export interface Translator<TPayload = unknown> {
   type: string;
   version: string;
   schema?: object;
+  validate?(
+    ctx: TranslationContext,
+    payload: TPayload
+  ): Promise<void> | void;
   translate(ctx: TranslationContext, payload: TPayload): Promise<ExecutionPlan>;
 }

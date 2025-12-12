@@ -81,6 +81,34 @@ export class XCFGEngine {
       throw new Error(message);
     }
 
+    if (translator.validate) {
+      try {
+        await translator.validate({ request_id, envelope }, envelope.payload as any);
+        await this.audit.write({
+          request_id,
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          stage: 'validate',
+          message: 'Payload validated'
+        });
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        await this.audit.write({
+          request_id,
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          stage: 'validate',
+          message: 'Payload validation failed',
+          data: { error: errorMessage }
+        });
+        this.telemetry.metrics.incCounter('xcfg_requests_failed_total', 1, {
+          type: envelope.type,
+          reason: 'validation'
+        });
+        throw new Error(`Validation failed: ${errorMessage}`);
+      }
+    }
+
     const plan = await translator.translate(
       { request_id, envelope },
       envelope.payload

@@ -146,7 +146,7 @@ changing engine code. This stays optional so xcfg remains headless and testable.
 
 1. Define a stable `type` name and `type_version`.
 2. Publish a JSON Schema for `payload`.
-3. Implement a translator producing an execution plan.
+3. Implement a translator producing an execution plan, and optionally a `validate` hook for payload validation.
 4. Ensure adapters exist for targeted backends.
 5. Add tests and observability for the new type.
 
@@ -178,6 +178,8 @@ npm run build
 ```sh
 XCFG_AUTOSTART=1 npm run start
 ```
+
+Optional auth: set `XCFG_API_KEY` to require callers to send either `x-api-key: <key>` or `Authorization: Bearer <key>`.
 
 3. Submit an async request using the mock adapter:
 
