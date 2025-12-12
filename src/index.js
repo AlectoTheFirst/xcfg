@@ -20,6 +20,12 @@ import { firewallRuleChangeTranslator } from './examples/translators/firewallRul
 import { firewallRuleChangeTranslatorV2 } from './examples/translators/firewallRuleChange.js';
 import { checkpointAdapter } from './examples/adapters/checkpointAdapter.js';
 import { mockAsyncAdapter } from './examples/adapters/mockAsyncAdapter.js';
+import {
+  infrahubAdapter,
+  nautobotAdapter,
+  velocloudAdapter,
+  zscalerAdapter
+} from './examples/adapters/scaffoldAdapters.js';
 
 export function createDefaultEngine(opts = {}) {
   const registry = new Registry();
@@ -27,6 +33,10 @@ export function createDefaultEngine(opts = {}) {
   registry.registerTranslator(firewallRuleChangeTranslatorV2);
   registry.registerAdapter(checkpointAdapter);
   registry.registerAdapter(mockAsyncAdapter);
+  registry.registerAdapter(velocloudAdapter);
+  registry.registerAdapter(zscalerAdapter);
+  registry.registerAdapter(nautobotAdapter);
+  registry.registerAdapter(infrahubAdapter);
 
   return new XCFGEngine(
     registry,

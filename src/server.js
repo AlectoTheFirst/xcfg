@@ -7,7 +7,7 @@ import { createDefaultEngine } from './index.js';
 import { ConsoleAuditSink, FanoutAuditSink, InMemoryAuditSink } from './core/audit.js';
 import { InMemoryRequestStore } from './core/requestStore.js';
 import { InProcessRunner } from './core/runner.js';
-import { isXcfgEnvelope } from './core/envelope.js';
+import { isXcfgEnvelope, XCFG_API_VERSION } from './core/envelope.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
 import { isTaskStatus } from './core/plan.js';
 import { stableStringify } from './core/stableJson.js';
@@ -168,6 +168,30 @@ export const server = http.createServer(async (req, res) => {
 
     if (!isAuthorized(req)) {
       return sendJson(res, 401, { error: 'Unauthorized' });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/catalog') {
+      const translators =
+        typeof engine.registry?.listTranslators === 'function'
+          ? engine.registry.listTranslators()
+          : [];
+      const adapters =
+        typeof engine.registry?.listAdapters === 'function'
+          ? engine.registry.listAdapters()
+          : [];
+      const configured = Object.entries(backendsConfig.backends ?? {})
+        .map(([name, cfg]) => ({
+          name,
+          kind: typeof cfg?.kind === 'string' ? cfg.kind : undefined
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      return sendJson(res, 200, {
+        api_version: XCFG_API_VERSION,
+        translators,
+        adapters,
+        backends_configured: configured
+      });
     }
 
     if (req.method === 'GET' && url.pathname === '/v1/requests') {
