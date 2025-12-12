@@ -4,6 +4,12 @@ xcfg is a translation and orchestration layer between intent-driven frontends (e
 
 The engine accepts a stable **intent envelope** from callers, validates/normalizes it, translates it into one or more backend-specific tasks, executes those tasks either statelessly or with durable state, and exposes full auditability, traceability, and monitoring.
 
+## Status (MVP / POC)
+
+This repository is an **MVP/POC scaffold** intended for demos, experimentation, and design validation.
+
+It is **not production-ready**: it includes minimal security controls, uses example/scaffold backend adapters, and does not yet provide the durability, hardening, or operational guarantees required for real change automation in production networks.
+
 ## Core Ideas
 
 - **Intent-first inbound API**: Callers send a `type` + `payload` that represents desired change, not vendor-specific actions.
@@ -183,6 +189,15 @@ This repo is a POC scaffold. Next steps are to add:
 - OpenTelemetry tracing + Prometheus metrics.
 - Append-only audit/event store.
 - Declarative translator format + optional visual editor.
+
+## TODO (MVP → Production)
+
+- Real backend adapters (auth, retries/backoff, rate limits, idempotent vendor operations, error mapping).
+- Durable workflow execution (distributed queue/outbox + retries + scheduling; survives restarts; scales horizontally).
+- Strong authn/authz (OIDC/JWT or mTLS + RBAC) and **separate** callback authentication.
+- Type catalog + schema publishing (JSON Schema/OpenAPI) with versioned validation per `type@type_version`.
+- Production observability (structured logs, OpenTelemetry traces, Prometheus-friendly metrics).
+- Policy expansion + governance (more than CIDRs; per-env/tenant overlays; change windows; signed/reviewed bundles).
 
 ## POC Quickstart
 
