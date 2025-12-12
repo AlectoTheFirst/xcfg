@@ -39,8 +39,16 @@ export class InProcessRunner {
     if (this.busy) return;
     this.busy = true;
     try {
-      await this.processQueued();
-      await this.processRunning();
+      try {
+        await this.processQueued();
+      } catch (err) {
+        console.error('[runner] processQueued failed', err);
+      }
+      try {
+        await this.processRunning();
+      } catch (err) {
+        console.error('[runner] processRunning failed', err);
+      }
     } finally {
       this.busy = false;
     }
@@ -52,26 +60,34 @@ export class InProcessRunner {
       this.opts.maxBatchSize ?? 5
     );
     for (const record of queued) {
-      const plan =
-        record.plan ??
-        (await this.engine.handle(record.envelope, {
+      try {
+        const plan =
+          record.plan ??
+          (await this.engine.handle(record.envelope, {
+            request_id: record.request_id,
+            execute: false
+          })).plan;
+
+        await this.store.update(record.request_id, { status: 'running', plan });
+
+        const { results, status } = await this.engine.executePlan(
+          record.request_id,
+          record.envelope,
+          plan
+        );
+
+        await this.store.update(record.request_id, {
+          plan,
+          results,
+          status
+        });
+      } catch (err) {
+        console.error('[runner] request execution failed', {
           request_id: record.request_id,
-          execute: false
-        })).plan;
-
-      await this.store.update(record.request_id, { status: 'running', plan });
-
-      const { results, status } = await this.engine.executePlan(
-        record.request_id,
-        record.envelope,
-        plan
-      );
-
-      await this.store.update(record.request_id, {
-        plan,
-        results,
-        status
-      });
+          error: err
+        });
+        await this.store.update(record.request_id, { status: 'failed' });
+      }
     }
   }
 
@@ -81,43 +97,50 @@ export class InProcessRunner {
       this.opts.maxBatchSize ?? 50
     );
     for (const record of running) {
-      if (!record.plan || !record.results) continue;
-      const updatedResults: TaskResult[] = [...record.results];
-      let changed = false;
-      for (let i = 0; i < updatedResults.length; i++) {
-        const r = updatedResults[i];
-        if (r.status !== 'running' || !r.external_id) continue;
-        const adapter = this.engine.getAdapter(r.backend);
-        if (!adapter?.checkStatus) continue;
-        const task = record.plan.tasks.find(t => t.id === r.task_id);
-        if (!task) continue;
-        try {
-          const newStatus = await adapter.checkStatus(r.external_id, {
-            request_id: record.request_id,
-            task
-          });
-          if (newStatus !== r.status) {
-            updatedResults[i] = {
-              ...r,
-              status: newStatus,
-              finished_at:
-                newStatus === 'succeeded' || newStatus === 'failed'
-                  ? new Date().toISOString()
-                  : r.finished_at
-            };
-            changed = true;
+      try {
+        if (!record.plan || !record.results) continue;
+        const updatedResults: TaskResult[] = [...record.results];
+        let changed = false;
+        for (let i = 0; i < updatedResults.length; i++) {
+          const r = updatedResults[i];
+          if (r.status !== 'running' || !r.external_id) continue;
+          const adapter = this.engine.getAdapter(r.backend);
+          if (!adapter?.checkStatus) continue;
+          const task = record.plan.tasks.find(t => t.id === r.task_id);
+          if (!task) continue;
+          try {
+            const newStatus = await adapter.checkStatus(r.external_id, {
+              request_id: record.request_id,
+              task
+            });
+            if (newStatus !== r.status) {
+              updatedResults[i] = {
+                ...r,
+                status: newStatus,
+                finished_at:
+                  newStatus === 'succeeded' || newStatus === 'failed'
+                    ? new Date().toISOString()
+                    : r.finished_at
+              };
+              changed = true;
+            }
+          } catch {
+            // If polling fails, leave task running for next tick.
           }
-        } catch {
-          // If polling fails, leave task running for next tick.
         }
-      }
 
-      if (!changed) continue;
-      const status = rollupRequestStatus(record.plan, updatedResults);
-      await this.store.update(record.request_id, {
-        results: updatedResults,
-        status
-      });
+        if (!changed) continue;
+        const status = rollupRequestStatus(record.plan, updatedResults);
+        await this.store.update(record.request_id, {
+          results: updatedResults,
+          status
+        });
+      } catch (err) {
+        console.error('[runner] request poll/update failed', {
+          request_id: record.request_id,
+          error: err
+        });
+      }
     }
   }
 }
