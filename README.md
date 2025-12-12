@@ -182,6 +182,7 @@ Optional auth: set `XCFG_API_KEY` to require callers to send either `x-api-key: 
 Optional storage:
 - `XCFG_STORE=memory` to use in-memory storage
 - `XCFG_DB_PATH=data/xcfg.db` to change SQLite path
+In SQLite mode, xcfg also persists audit events and exposes them via `GET /v1/requests/<request_id>/audit`.
 
 3. Submit an async request using the mock adapter:
 
@@ -220,6 +221,12 @@ Or resolve the request by ServiceNow idempotency key:
 
 ```sh
 curl -s "http://localhost:8080/v1/requests?idempotency_key=SNOW:CHG0001"
+```
+
+View the audit trail (SQLite mode):
+
+```sh
+curl -s http://localhost:8080/v1/requests/<request_id>/audit
 ```
 
 5. View metrics:

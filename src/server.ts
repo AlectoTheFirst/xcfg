@@ -3,7 +3,9 @@ import { randomUUID } from 'crypto';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { createDefaultEngine } from './index.js';
+import { ConsoleAuditSink } from './core/audit.js';
 import { InMemoryRequestStore } from './core/requestStore.js';
+import { SQLiteAuditSink } from './core/sqliteAuditSink.js';
 import { SQLiteRequestStore } from './core/sqliteRequestStore.js';
 import { InProcessRunner } from './core/runner.js';
 import type { XCFGEnvelope } from './core/envelope.js';
@@ -11,11 +13,15 @@ import { ConsoleTelemetry } from './core/telemetry.js';
 import type { TaskResult, TaskStatus } from './core/plan.js';
 
 const telemetry = new ConsoleTelemetry();
-const engine = createDefaultEngine({ telemetry });
-const store =
-  process.env.XCFG_STORE === 'memory'
-    ? new InMemoryRequestStore()
-    : new SQLiteRequestStore(process.env.XCFG_DB_PATH ?? 'data/xcfg.db');
+const useMemoryStore = process.env.XCFG_STORE === 'memory';
+const dbPath = process.env.XCFG_DB_PATH ?? 'data/xcfg.db';
+const store = useMemoryStore
+  ? new InMemoryRequestStore()
+  : new SQLiteRequestStore(dbPath);
+const auditSink = useMemoryStore
+  ? new ConsoleAuditSink()
+  : new SQLiteAuditSink(dbPath);
+const engine = createDefaultEngine({ telemetry, audit: auditSink });
 const runner = new InProcessRunner(engine, store);
 
 const requiredApiKey = process.env.XCFG_API_KEY;
@@ -228,6 +234,29 @@ export const server = http.createServer(async (req, res) => {
         task_id: ref.task_id,
         status
       });
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname.startsWith('/v1/requests/') &&
+      url.pathname.endsWith('/audit')
+    ) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const request_id = parts[2];
+      if (!request_id) return sendJson(res, 404, { error: 'Not found' });
+      const record = await store.get(request_id);
+      if (!record) return sendJson(res, 404, { error: 'Not found' });
+
+      if (!(auditSink instanceof SQLiteAuditSink)) {
+        return sendJson(res, 501, {
+          error: 'Audit sink is not queryable in this mode'
+        });
+      }
+
+      const limitParam = url.searchParams.get('limit');
+      const limit = limitParam ? Number(limitParam) : 1000;
+      const events = await auditSink.listByRequestId(request_id, limit);
+      return sendJson(res, 200, { request_id, events });
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/v1/requests/')) {
