@@ -9,6 +9,7 @@ export * from './core/requestStore.js';
 export * from './core/telemetry.js';
 export * from './core/bus.js';
 export * from './core/runner.js';
+export * from './core/policy.js';
 
 import { Registry } from './core/registry.js';
 import { XCFGEngine } from './core/engine.js';

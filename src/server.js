@@ -11,6 +11,7 @@ import { isXcfgEnvelope } from './core/envelope.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
 import { isTaskStatus } from './core/plan.js';
 import { stableStringify } from './core/stableJson.js';
+import { createDefaultPolicyEngine } from './policies/index.js';
 
 const telemetry = new ConsoleTelemetry();
 const storeKind = process.env.XCFG_STORE ?? 'memory';
@@ -19,6 +20,7 @@ const dbPath = process.env.XCFG_DB_PATH ?? 'data/xcfg.db';
 const { store, auditSink } = await createStorage(storeKind, dbPath);
 const engine = createDefaultEngine({ telemetry, audit: auditSink });
 const runner = new InProcessRunner(engine, store);
+const policyEngine = createDefaultPolicyEngine(process.env);
 
 const requiredApiKey = process.env.XCFG_API_KEY;
 
@@ -84,6 +86,20 @@ function fingerprintEnvelope(envelope) {
   });
 }
 
+function denyRecordResults(plan, violations) {
+  const now = new Date().toISOString();
+  const message =
+    violations.length > 0 ? violations[0].message : 'Request denied by policy';
+  return (plan?.tasks ?? []).map(t => ({
+    task_id: t.id,
+    backend: t.backend,
+    status: 'canceled',
+    error: { message },
+    started_at: now,
+    finished_at: now
+  }));
+}
+
 export const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
@@ -133,6 +149,13 @@ export const server = http.createServer(async (req, res) => {
             links: { self: `/v1/requests/${existing.request_id}` }
           });
         }
+        if (existing.status === 'denied') {
+          return sendJson(res, 403, {
+            error: 'Request denied by policy',
+            request_id: existing.request_id,
+            links: { self: `/v1/requests/${existing.request_id}` }
+          });
+        }
         return sendJson(res, 202, {
           request_id: existing.request_id,
           status: existing.status,
@@ -146,6 +169,42 @@ export const server = http.createServer(async (req, res) => {
         request_id,
         execute: false
       });
+
+      const policy = await policyEngine.evaluate({
+        request_id,
+        envelope: body,
+        plan: handleResult.plan
+      });
+      if (policy.violations.length > 0) {
+        await auditSink.write({
+          request_id,
+          timestamp: new Date().toISOString(),
+          level: policy.decision === 'deny' ? 'warn' : 'info',
+          stage: 'policy',
+          message:
+            policy.decision === 'deny' ? 'Policy denied request' : 'Policy warnings',
+          data: policy
+        });
+      }
+
+      if (body.operation === 'apply' && policy.decision === 'deny') {
+        await store.create({
+          request_id,
+          envelope: body,
+          plan: handleResult.plan,
+          results: denyRecordResults(handleResult.plan, policy.violations),
+          status: 'denied',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+
+        return sendJson(res, 403, {
+          error: 'Request denied by policy',
+          request_id,
+          violations: policy.violations,
+          links: { self: `/v1/requests/${request_id}` }
+        });
+      }
 
       await store.create({
         request_id,

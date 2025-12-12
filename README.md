@@ -17,6 +17,7 @@ The engine accepts a stable **intent envelope** from callers, validates/normaliz
 
 - Workflow diagram: `docs/WORKFLOW.md`
 - Onboarding a new backend: `docs/ONBOARDING_BACKEND.md`
+- Policy guardrails: `docs/POLICY.md`
 
 ## Stable Inbound API (ServiceNow → xcfg)
 
