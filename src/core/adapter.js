@@ -2,6 +2,7 @@
  * @typedef {Object} AdapterContext
  * @property {string} request_id
  * @property {any} task
+ * @property {Record<string, any>=} config
  * @property {Record<string, string>=} secrets
  * @property {Record<string, any>=} state
  */
@@ -13,4 +14,3 @@
  * @property {(external_id: string, ctx: AdapterContext) => Promise<string>=} checkStatus
  * @property {(payload: any, ctx: AdapterContext) => Promise<void>=} handleCallback
  */
-

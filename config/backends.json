@@ -1,0 +1,42 @@
+{
+  "backends": {
+    "checkpoint": {
+      "kind": "checkpoint",
+      "base_url": "https://checkpoint-mgmt.example",
+      "domain": "mds1",
+      "verify_tls": true
+    },
+    "velocloud": {
+      "kind": "velocloud",
+      "base_url": "https://vco.example"
+    },
+    "zscaler": {
+      "kind": "zscaler",
+      "base_url": "https://zsapi.example"
+    },
+    "nautobot": {
+      "kind": "nautobot",
+      "base_url": "https://nautobot.example"
+    },
+    "infrahub": {
+      "kind": "infrahub",
+      "base_url": "https://infrahub.example"
+    },
+    "mock-async": {
+      "kind": "mock"
+    }
+  },
+  "profiles": [
+    {
+      "name": "prod-checkpoint-untrust-strict",
+      "priority": 100,
+      "match": { "environment": "prod", "backend": "checkpoint", "tags.zone": "untrust" },
+      "override": {
+        "backends": {
+          "checkpoint": { "domain": "mds-prod", "policy_package": "corp-prod" }
+        }
+      }
+    }
+  ]
+}
+

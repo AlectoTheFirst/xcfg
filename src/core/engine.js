@@ -4,14 +4,36 @@ import { performance } from 'node:perf_hooks';
 import { NoopTelemetry } from './telemetry.js';
 
 export class XCFGEngine {
-  constructor(registry, audit, telemetry = NoopTelemetry) {
+  constructor(registry, audit, telemetry = NoopTelemetry, contextProvider) {
     this.registry = registry;
     this.audit = audit;
     this.telemetry = telemetry;
+    this.contextProvider = contextProvider;
   }
 
   getAdapter(name) {
     return this.registry.getAdapter(name);
+  }
+
+  async buildAdapterContext(request_id, envelope, plan, task) {
+    const base = { request_id, task };
+    if (!this.contextProvider) return base;
+    try {
+      const extra = await this.contextProvider({ request_id, envelope, plan, task });
+      if (!extra || typeof extra !== 'object') return base;
+      return { ...base, ...extra };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await this.audit.write({
+        request_id,
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        stage: 'execute',
+        message: 'Adapter context provider failed',
+        data: { error: errorMessage, backend: task?.backend, task_id: task?.id }
+      });
+      return base;
+    }
   }
 
   async executePlan(request_id, envelope, plan, existingResults = []) {
@@ -105,7 +127,8 @@ export class XCFGEngine {
 
         try {
           const now = new Date().toISOString();
-          const result = await adapter.execute(task, { request_id, task });
+          const ctx = await this.buildAdapterContext(request_id, envelope, plan, task);
+          const result = await adapter.execute(task, ctx);
           taskOutcome = result.status;
 
           const finished_at =

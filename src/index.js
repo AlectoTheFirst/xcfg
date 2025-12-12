@@ -10,6 +10,7 @@ export * from './core/telemetry.js';
 export * from './core/bus.js';
 export * from './core/runner.js';
 export * from './core/policy.js';
+export * from './core/backendConfig.js';
 
 import { Registry } from './core/registry.js';
 import { XCFGEngine } from './core/engine.js';
@@ -30,6 +31,7 @@ export function createDefaultEngine(opts = {}) {
   return new XCFGEngine(
     registry,
     opts.audit ?? new ConsoleAuditSink(),
-    opts.telemetry ?? new ConsoleTelemetry()
+    opts.telemetry ?? new ConsoleTelemetry(),
+    opts.contextProvider
   );
 }

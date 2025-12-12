@@ -117,10 +117,13 @@ export class InProcessRunner {
           const task = record.plan.tasks.find(t => t.id === r.task_id);
           if (!task) continue;
           try {
-            const newStatus = await adapter.checkStatus(r.external_id, {
-              request_id: record.request_id,
+            const ctx = await this.engine.buildAdapterContext(
+              record.request_id,
+              record.envelope,
+              record.plan,
               task
-            });
+            );
+            const newStatus = await adapter.checkStatus(r.external_id, ctx);
             if (newStatus !== r.status) {
               updatedResults[i] = {
                 ...r,

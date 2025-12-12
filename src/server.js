@@ -13,13 +13,26 @@ import { isTaskStatus } from './core/plan.js';
 import { stableStringify } from './core/stableJson.js';
 import { readFile } from 'node:fs/promises';
 import { createPolicyEngine, DEFAULT_POLICY_CONFIG } from './policies/index.js';
+import {
+  DEFAULT_BACKENDS_CONFIG,
+  DEFAULT_SECRETS_CONFIG,
+  resolveBackendConfig,
+  resolveBackendSecrets
+} from './core/backendConfig.js';
 
 const telemetry = new ConsoleTelemetry();
 const storeKind = process.env.XCFG_STORE ?? 'memory';
 const dbPath = process.env.XCFG_DB_PATH ?? 'data/xcfg.db';
 
 const { store, auditSink } = await createStorage(storeKind, dbPath);
-const engine = createDefaultEngine({ telemetry, audit: auditSink });
+const backendsConfig = await loadBackendsConfig();
+const secretsConfig = await loadSecretsConfig();
+const contextProvider = createBackendContextProvider(backendsConfig, secretsConfig);
+const engine = createDefaultEngine({
+  telemetry,
+  audit: auditSink,
+  contextProvider
+});
 const runner = new InProcessRunner(engine, store);
 const policyConfig = await loadPolicyConfig();
 
@@ -84,6 +97,34 @@ async function loadPolicyConfig() {
   } catch {
     return DEFAULT_POLICY_CONFIG;
   }
+}
+
+async function loadBackendsConfig() {
+  try {
+    const raw = await readFile('config/backends.json', 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : DEFAULT_BACKENDS_CONFIG;
+  } catch {
+    return DEFAULT_BACKENDS_CONFIG;
+  }
+}
+
+async function loadSecretsConfig() {
+  try {
+    const raw = await readFile('config/secrets.json', 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : DEFAULT_SECRETS_CONFIG;
+  } catch {
+    return DEFAULT_SECRETS_CONFIG;
+  }
+}
+
+function createBackendContextProvider(backends, secrets) {
+  return async ({ envelope, plan, task }) => {
+    const resolved = resolveBackendConfig(backends, envelope, plan, task);
+    const resolvedSecrets = resolveBackendSecrets(secrets, task);
+    return { config: resolved.config, secrets: resolvedSecrets.secrets };
+  };
 }
 
 function fingerprintEnvelope(envelope) {

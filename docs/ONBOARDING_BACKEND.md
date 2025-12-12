@@ -48,7 +48,7 @@ export const myBackendAdapter = {
 
   async execute(task, ctx) {
     // task: { id, backend, action, input, depends_on? }
-    // ctx:  { request_id, task, secrets?, state? }
+    // ctx:  { request_id, task, config?, secrets?, state? }
 
     // 1) Switch on task.action
     // 2) Call the vendor API
@@ -114,7 +114,16 @@ With a payload like:
 
 xcfg uses persisted reverse mapping `(backend, external_id) → (request_id, task_id)` to update the correct task.
 
-## Step 5: Register the Adapter
+## Step 5: Configure the Backend (Endpoints + Secrets)
+
+xcfg provides backend configuration to adapters via:
+
+- `ctx.config` from `config/backends.json`
+- `ctx.secrets` from `config/secrets.json` (not committed)
+
+See `docs/BACKENDS.md` for the file formats and how profile overrides can be pinned to metadata.
+
+## Step 6: Register the Adapter
 
 Register the adapter in the default engine registry:
 
@@ -127,7 +136,7 @@ import { myBackendAdapter } from './examples/adapters/myBackendAdapter.js';
 registry.registerAdapter(myBackendAdapter);
 ```
 
-## Step 6: Route Intents to Your Backend
+## Step 7: Route Intents to Your Backend
 
 Translators choose the backend by setting `task.backend`. In the POC example, the translator uses:
 
@@ -136,7 +145,7 @@ Translators choose the backend by setting `task.backend`. In the POC example, th
 
 When adding a new backend, ensure the relevant translators can emit tasks with `backend: "<your-adapter-name>"`.
 
-## Step 7: Add a Smoke Test
+## Step 8: Add a Smoke Test
 
 Recommended minimum test:
 
@@ -153,4 +162,3 @@ The repo already includes a DAG scheduling test: `test/engine-dag.test.js`.
 - Rate limiting and concurrency controls per backend
 - Strong auth (mTLS/JWT) + distinct callback authentication
 - Better state reconciliation (`operation:"validate"`) and drift detection
-
