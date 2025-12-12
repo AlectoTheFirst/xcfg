@@ -17,6 +17,7 @@ This is a living document. Versions are indicative.
   - Request/event store (Postgres or similar).
   - Secrets/config store abstraction (Vault/KMS).
 - Async workflow runner with retries/backoff and task DAG scheduling.
+- Message bus / queue abstraction (DB-backed queue/outbox first; pluggable NATS/RabbitMQ/Kafka later).
 - Idempotency enforcement on `idempotency_key`.
 - Authentication/authorization (mTLS + JWT/OIDC) and RBAC.
 - Schema validation per `type@type_version` (JSON Schema).

@@ -7,6 +7,7 @@ export * from './core/audit.js';
 export * from './core/engine.js';
 export * from './core/requestStore.js';
 export * from './core/telemetry.js';
+export * from './core/bus.js';
 
 import { Registry } from './core/registry.js';
 import { XCFGEngine } from './core/engine.js';
