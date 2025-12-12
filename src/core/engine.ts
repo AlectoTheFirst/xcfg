@@ -7,7 +7,12 @@ import { Registry } from './registry.js';
 import type { Telemetry } from './telemetry.js';
 import { NoopTelemetry } from './telemetry.js';
 
-export type RequestStatus = 'planned' | 'executed' | 'failed';
+export type RequestStatus = 'planned' | 'queued' | 'running' | 'executed' | 'failed';
+
+export interface HandleOptions {
+  request_id?: string;
+  execute?: boolean;
+}
 
 export interface HandleResult {
   request_id: string;
@@ -23,8 +28,17 @@ export class XCFGEngine {
     private telemetry: Telemetry = NoopTelemetry
   ) {}
 
-  async handle(envelope: XCFGEnvelope): Promise<HandleResult> {
-    const request_id = randomUUID();
+  getAdapter(name: string) {
+    return this.registry.getAdapter(name);
+  }
+
+  async handle(
+    envelope: XCFGEnvelope,
+    opts: HandleOptions = {}
+  ): Promise<HandleResult> {
+    const request_id = opts.request_id ?? randomUUID();
+    const executeNow =
+      opts.execute ?? (envelope.operation === 'apply');
     const requestSpan = this.telemetry.tracer.startSpan('xcfg.handle', {
       request_id,
       type: envelope.type,
@@ -80,18 +94,20 @@ export class XCFGEngine {
       data: plan
     });
 
-    if (envelope.operation !== 'apply') {
+    if (!executeNow) {
+      const status: RequestStatus =
+        envelope.operation === 'apply' ? 'queued' : 'planned';
       this.telemetry.metrics.observeHistogram(
         'xcfg_request_duration_ms',
         performance.now() - requestStart,
         {
           type: envelope.type,
           operation: envelope.operation,
-          status: 'planned'
+          status
         }
       );
       requestSpan.end('ok');
-      return { request_id, plan, status: 'planned' };
+      return { request_id, plan, status };
     }
 
     const results: TaskResult[] = [];
@@ -210,9 +226,25 @@ export class XCFGEngine {
       }
     }
 
-    const status = results.some(r => r.status === 'failed')
+    const hasFailed = results.some(r => r.status === 'failed');
+    const allSucceeded =
+      plan.tasks.length > 0 &&
+      plan.tasks.every(
+        t =>
+          results.find(r => r.task_id === t.id)?.status ===
+          'succeeded'
+      );
+    const anyRunning = results.some(
+      r => r.status === 'running' || r.status === 'queued'
+    );
+
+    const status: RequestStatus = hasFailed
       ? 'failed'
-      : 'executed';
+      : allSucceeded
+        ? 'executed'
+        : anyRunning
+          ? 'running'
+          : 'executed';
     this.telemetry.metrics.observeHistogram(
       'xcfg_request_duration_ms',
       performance.now() - requestStart,

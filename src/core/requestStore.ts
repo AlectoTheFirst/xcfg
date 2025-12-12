@@ -26,6 +26,13 @@ export interface RequestStore {
     patch: Partial<Omit<RequestRecord, 'request_id' | 'created_at'>>
   ): Promise<void>;
   get(request_id: string): Promise<RequestRecord | undefined>;
+  findByIdempotencyKey(
+    idempotency_key: string
+  ): Promise<RequestRecord | undefined>;
+  listByStatus(
+    statuses: RequestStatus[],
+    limit?: number
+  ): Promise<RequestRecord[]>;
   findTaskByExternalId(
     backend: string,
     external_id: string
@@ -35,6 +42,7 @@ export interface RequestStore {
 export class InMemoryRequestStore implements RequestStore {
   private records = new Map<string, RequestRecord>();
   private externalRefs = new Map<string, TaskExternalRef>();
+  private byIdempotencyKey = new Map<string, string>();
 
   private makeExternalKey(backend: string, external_id: string): string {
     return `${backend}:${external_id}`;
@@ -65,6 +73,7 @@ export class InMemoryRequestStore implements RequestStore {
 
   async create(record: RequestRecord): Promise<void> {
     this.records.set(record.request_id, record);
+    this.byIdempotencyKey.set(record.envelope.idempotency_key, record.request_id);
     this.reindexExternalRefs(record.request_id, record.results);
   }
 
@@ -80,6 +89,9 @@ export class InMemoryRequestStore implements RequestStore {
       updated_at: new Date().toISOString()
     };
     this.records.set(request_id, updated);
+    if (patch.envelope?.idempotency_key) {
+      this.byIdempotencyKey.set(patch.envelope.idempotency_key, request_id);
+    }
     if (patch.results) {
       this.reindexExternalRefs(request_id, patch.results);
     }
@@ -87,6 +99,29 @@ export class InMemoryRequestStore implements RequestStore {
 
   async get(request_id: string): Promise<RequestRecord | undefined> {
     return this.records.get(request_id);
+  }
+
+  async findByIdempotencyKey(
+    idempotency_key: string
+  ): Promise<RequestRecord | undefined> {
+    const request_id = this.byIdempotencyKey.get(idempotency_key);
+    if (!request_id) return undefined;
+    return this.records.get(request_id);
+  }
+
+  async listByStatus(
+    statuses: RequestStatus[],
+    limit = 100
+  ): Promise<RequestRecord[]> {
+    const allowed = new Set(statuses);
+    const results: RequestRecord[] = [];
+    for (const record of this.records.values()) {
+      if (!allowed.has(record.status)) continue;
+      results.push(record);
+      if (results.length >= limit) break;
+    }
+    results.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    return results;
   }
 
   async findTaskByExternalId(

@@ -7,8 +7,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js"
   },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/better-sqlite3": "^7.6.12",
     "typescript": "^5.5.0"
   }
 }

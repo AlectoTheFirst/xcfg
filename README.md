@@ -163,3 +163,57 @@ This repo is currently a scaffold. Next steps are to add:
 - OpenTelemetry tracing + Prometheus metrics.
 - Append-only audit/event store.
 - Declarative translator format + optional visual editor.
+
+## POC Quickstart
+
+1. Install deps and build:
+
+```sh
+npm install
+npm run build
+```
+
+2. Start the server (SQLite store by default):
+
+```sh
+XCFG_AUTOSTART=1 npm run start
+```
+
+3. Submit an async request using the mock adapter:
+
+```sh
+curl -s http://localhost:8080/v1/requests \
+  -H 'content-type: application/json' \
+  -d '{
+    "api_version":"1",
+    "type":"firewall-rule-change",
+    "type_version":"1",
+    "operation":"apply",
+    "idempotency_key":"SNOW:CHG0001",
+    "target":{"backend_hint":"mock-async"},
+    "payload":{
+      "change_kind":"add",
+      "rule":{
+        "name":"allow-app-to-db",
+        "action":"allow",
+        "source":[{"cidr":"10.10.0.0/24"}],
+        "destination":[{"cidr":"10.20.0.10/32"}],
+        "services":[{"protocol":"tcp","port":5432}]
+      }
+    }
+  }'
+```
+
+The response returns `202` with `status: queued`. The runner will execute in‑process and the mock backend will complete after ~3s.
+
+4. Poll status:
+
+```sh
+curl -s http://localhost:8080/v1/requests/<request_id>
+```
+
+5. View metrics:
+
+```sh
+curl -s http://localhost:8080/v1/metrics
+```

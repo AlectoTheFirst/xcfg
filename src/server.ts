@@ -1,13 +1,21 @@
 import http from 'http';
+import { randomUUID } from 'crypto';
 import { createDefaultEngine } from './index.js';
 import { InMemoryRequestStore } from './core/requestStore.js';
+import { SQLiteRequestStore } from './core/sqliteRequestStore.js';
+import { InProcessRunner } from './core/runner.js';
 import type { XCFGEnvelope } from './core/envelope.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
 import type { TaskResult, TaskStatus } from './core/plan.js';
 
 const telemetry = new ConsoleTelemetry();
 const engine = createDefaultEngine({ telemetry });
-const store = new InMemoryRequestStore();
+const store =
+  process.env.XCFG_STORE === 'memory'
+    ? new InMemoryRequestStore()
+    : new SQLiteRequestStore(process.env.XCFG_DB_PATH ?? 'data/xcfg.db');
+const runner = new InProcessRunner(engine, store);
+runner.start();
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);
@@ -75,10 +83,26 @@ export const server = http.createServer(async (req, res) => {
         });
       }
 
-      const handleResult = await engine.handle(body);
+      const existing = await store.findByIdempotencyKey(
+        body.idempotency_key
+      );
+      if (existing) {
+        return sendJson(res, 202, {
+          request_id: existing.request_id,
+          status: existing.status,
+          idempotent_replay: true,
+          links: { self: `/v1/requests/${existing.request_id}` }
+        });
+      }
+
+      const request_id = randomUUID();
+      const handleResult = await engine.handle(body, {
+        request_id,
+        execute: false
+      });
 
       await store.create({
-        request_id: handleResult.request_id,
+        request_id,
         envelope: body,
         plan: handleResult.plan,
         results: handleResult.results,
@@ -87,10 +111,14 @@ export const server = http.createServer(async (req, res) => {
         updated_at: new Date().toISOString()
       });
 
+      if (body.operation === 'apply') {
+        await runner.enqueue(request_id);
+      }
+
       return sendJson(res, 202, {
-        request_id: handleResult.request_id,
+        request_id,
         status: handleResult.status,
-        links: { self: `/v1/requests/${handleResult.request_id}` }
+        links: { self: `/v1/requests/${request_id}` }
       });
     }
 

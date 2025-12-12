@@ -6,8 +6,10 @@ export * from './core/registry.js';
 export * from './core/audit.js';
 export * from './core/engine.js';
 export * from './core/requestStore.js';
+export * from './core/sqliteRequestStore.js';
 export * from './core/telemetry.js';
 export * from './core/bus.js';
+export * from './core/runner.js';
 
 import { Registry } from './core/registry.js';
 import { XCFGEngine } from './core/engine.js';
@@ -15,6 +17,7 @@ import type { AuditSink } from './core/audit.js';
 import { ConsoleAuditSink } from './core/audit.js';
 import { firewallRuleChangeTranslator } from './examples/translators/firewallRuleChange.js';
 import { checkpointAdapter } from './examples/adapters/checkpointAdapter.js';
+import { mockAsyncAdapter } from './examples/adapters/mockAsyncAdapter.js';
 import type { Telemetry } from './core/telemetry.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
 
@@ -29,6 +32,7 @@ export function createDefaultEngine(
   const registry = new Registry();
   registry.registerTranslator(firewallRuleChangeTranslator);
   registry.registerAdapter(checkpointAdapter);
+  registry.registerAdapter(mockAsyncAdapter);
   return new XCFGEngine(
     registry,
     opts.audit ?? new ConsoleAuditSink(),
