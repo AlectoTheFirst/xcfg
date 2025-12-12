@@ -216,6 +216,12 @@ The response returns `202` with `status: queued`. The runner will execute in‑p
 curl -s http://localhost:8080/v1/requests/<request_id>
 ```
 
+Or resolve the request by ServiceNow idempotency key:
+
+```sh
+curl -s "http://localhost:8080/v1/requests?idempotency_key=SNOW:CHG0001"
+```
+
 5. View metrics:
 
 ```sh

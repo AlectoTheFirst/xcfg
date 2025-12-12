@@ -17,7 +17,6 @@ const store =
     ? new InMemoryRequestStore()
     : new SQLiteRequestStore(process.env.XCFG_DB_PATH ?? 'data/xcfg.db');
 const runner = new InProcessRunner(engine, store);
-runner.start();
 
 const requiredApiKey = process.env.XCFG_API_KEY;
 
@@ -94,6 +93,18 @@ export const server = http.createServer(async (req, res) => {
 
     if (!isAuthorized(req)) {
       return sendJson(res, 401, { error: 'Unauthorized' });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/requests') {
+      const key = url.searchParams.get('idempotency_key');
+      if (!key) {
+        return sendJson(res, 400, {
+          error: 'Missing idempotency_key query parameter'
+        });
+      }
+      const record = await store.findByIdempotencyKey(key);
+      if (!record) return sendJson(res, 404, { error: 'Not found' });
+      return sendJson(res, 200, record);
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/requests') {
@@ -234,6 +245,7 @@ export const server = http.createServer(async (req, res) => {
 });
 
 export function start(port = 8080) {
+  runner.start();
   server.listen(port, () => {
     // eslint-disable-next-line no-console
     console.log(`xcfg server listening on :${port}`);
