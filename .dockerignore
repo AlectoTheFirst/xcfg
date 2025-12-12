@@ -1,0 +1,13 @@
+.git
+.gitignore
+.DS_Store
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+data
+*.db
+*.db-*
+dist
+.env
+coverage

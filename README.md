@@ -253,3 +253,27 @@ curl -s http://localhost:8080/v1/requests/<request_id>/audit
 ```sh
 curl -s http://localhost:8080/v1/metrics
 ```
+
+## Container (Docker)
+
+Build:
+
+```sh
+docker build -t xcfg:local .
+```
+
+Run (in-memory store):
+
+```sh
+docker run --rm -p 8080:8080 xcfg:local
+```
+
+Run (SQLite persistence):
+
+```sh
+docker run --rm -p 8080:8080 \
+  -e XCFG_STORE=sqlite \
+  -e XCFG_DB_PATH=/app/data/xcfg.db \
+  -v xcfg-data:/app/data \
+  xcfg:local
+```
