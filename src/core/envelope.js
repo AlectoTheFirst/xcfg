@@ -11,10 +11,13 @@ export function isXcfgEnvelope(value) {
     value &&
     value.api_version === XCFG_API_VERSION &&
     typeof value.type === 'string' &&
+    value.type.trim() !== '' &&
     typeof value.type_version === 'string' &&
+    value.type_version.trim() !== '' &&
     typeof value.operation === 'string' &&
+    XCFG_OPERATIONS.includes(value.operation) &&
     typeof value.idempotency_key === 'string' &&
+    value.idempotency_key.trim() !== '' &&
     Object.prototype.hasOwnProperty.call(value, 'payload')
   );
 }
-

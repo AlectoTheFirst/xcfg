@@ -14,7 +14,25 @@ export class XCFGEngine {
     return this.registry.getAdapter(name);
   }
 
-  async executePlan(request_id, envelope, plan) {
+  async executePlan(request_id, envelope, plan, existingResults = []) {
+    const orderedTasks = this.topoSortTasks(plan.tasks ?? []);
+    const resultByTaskId = seedTaskResults(orderedTasks, existingResults);
+
+    const cancellationEvents = cancelBlockedTasks(
+      orderedTasks,
+      resultByTaskId,
+      new Date().toISOString()
+    );
+    for (const event of cancellationEvents) {
+      await this.audit.write({ request_id, ...event });
+    }
+
+    if (listRunnableTasks(orderedTasks, resultByTaskId).length === 0) {
+      const results = orderedResults(orderedTasks, resultByTaskId);
+      const status = this.rollupStatus(plan, results);
+      return { results, status };
+    }
+
     const span = this.telemetry.tracer.startSpan('xcfg.execute_plan', {
       request_id,
       type: envelope.type,
@@ -23,122 +41,156 @@ export class XCFGEngine {
     });
     const start = performance.now();
 
-    const results = [];
-    const orderedTasks = this.topoSortTasks(plan.tasks ?? []);
-    for (const task of orderedTasks) {
-      const taskSpan = this.telemetry.tracer.startSpan('xcfg.task.execute', {
-        request_id,
-        task_id: task.id,
-        backend: task.backend,
-        action: task.action
-      });
-      const taskStart = performance.now();
-      let taskOutcome = 'failed';
-      this.telemetry.metrics.incCounter('xcfg_tasks_total', 1, {
-        backend: task.backend,
-        action: task.action
-      });
+    while (true) {
+      const runnable = listRunnableTasks(orderedTasks, resultByTaskId);
+      if (runnable.length === 0) break;
 
-      const adapter = this.registry.getAdapter(task.backend);
-      if (!adapter) {
-        const message = `No adapter registered for backend ${task.backend}`;
-        await this.audit.write({
+      for (const task of runnable) {
+        const taskSpan = this.telemetry.tracer.startSpan('xcfg.task.execute', {
           request_id,
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          stage: 'execute',
-          message,
-          data: task
-        });
-        results.push({
           task_id: task.id,
           backend: task.backend,
-          status: 'failed',
-          error: { message }
+          action: task.action
         });
-        this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
+        const taskStart = performance.now();
+        let taskOutcome = 'failed';
+        this.telemetry.metrics.incCounter('xcfg_tasks_total', 1, {
           backend: task.backend,
-          reason: 'no_adapter'
+          action: task.action
         });
-        this.telemetry.metrics.observeHistogram(
-          'xcfg_task_duration_ms',
-          performance.now() - taskStart,
-          {
+
+        const adapter = this.registry.getAdapter(task.backend);
+        if (!adapter) {
+          const message = `No adapter registered for backend ${task.backend}`;
+          upsertResult(resultByTaskId, task.id, {
+            task_id: task.id,
             backend: task.backend,
-            action: task.action,
-            status: 'failed'
-          }
-        );
-        taskSpan.end('error');
-        continue;
-      }
+            status: 'failed',
+            error: { message },
+            finished_at: new Date().toISOString()
+          });
+          await this.audit.write({
+            request_id,
+            timestamp: new Date().toISOString(),
+            level: 'error',
+            stage: 'execute',
+            message,
+            data: task
+          });
+          this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
+            backend: task.backend,
+            reason: 'no_adapter'
+          });
+          this.telemetry.metrics.observeHistogram(
+            'xcfg_task_duration_ms',
+            performance.now() - taskStart,
+            {
+              backend: task.backend,
+              action: task.action,
+              status: 'failed'
+            }
+          );
+          taskSpan.end('error');
+          continue;
+        }
 
-      await this.audit.write({
-        request_id,
-        timestamp: new Date().toISOString(),
-        level: 'info',
-        stage: 'execute',
-        message: `Executing task ${task.id} via ${adapter.name}`,
-        data: task
-      });
-
-      try {
-        const result = await adapter.execute(task, { request_id, task });
-        taskOutcome = result.status;
-        results.push(result);
         await this.audit.write({
           request_id,
           timestamp: new Date().toISOString(),
           level: 'info',
           stage: 'execute',
-          message: `Task ${task.id} completed`,
-          data: result
+          message: `Executing task ${task.id} via ${adapter.name}`,
+          data: task
         });
-        if (result.status === 'failed') {
+
+        try {
+          const now = new Date().toISOString();
+          const result = await adapter.execute(task, { request_id, task });
+          taskOutcome = result.status;
+
+          const finished_at =
+            result.status === 'succeeded' || result.status === 'failed'
+              ? result.finished_at ?? now
+              : result.finished_at;
+          upsertResult(resultByTaskId, task.id, {
+            ...result,
+            task_id: task.id,
+            backend: task.backend,
+            started_at: result.started_at ?? now,
+            finished_at
+          });
+
+          const resultMessage =
+            result.status === 'running' || result.status === 'queued'
+              ? `Task ${task.id} accepted (${result.status})`
+              : `Task ${task.id} finished (${result.status})`;
+          await this.audit.write({
+            request_id,
+            timestamp: new Date().toISOString(),
+            level: 'info',
+            stage: 'execute',
+            message: resultMessage,
+            data: result
+          });
+
+          if (result.status === 'failed') {
+            this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
+              backend: task.backend,
+              reason: 'adapter_failed'
+            });
+            taskSpan.end('error');
+          } else {
+            taskSpan.end('ok');
+          }
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          taskOutcome = 'failed';
+          upsertResult(resultByTaskId, task.id, {
+            task_id: task.id,
+            backend: task.backend,
+            status: 'failed',
+            error: { message: errorMessage },
+            finished_at: new Date().toISOString()
+          });
+          await this.audit.write({
+            request_id,
+            timestamp: new Date().toISOString(),
+            level: 'error',
+            stage: 'execute',
+            message: `Task ${task.id} failed`,
+            data: { error: errorMessage }
+          });
           this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
             backend: task.backend,
-            reason: 'adapter_failed'
+            reason: 'exception'
           });
+          taskSpan.recordException(err);
           taskSpan.end('error');
-        } else {
-          taskSpan.end('ok');
+        } finally {
+          this.telemetry.metrics.observeHistogram(
+            'xcfg_task_duration_ms',
+            performance.now() - taskStart,
+            {
+              backend: task.backend,
+              action: task.action,
+              status: taskOutcome
+            }
+          );
         }
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        taskOutcome = 'failed';
-        results.push({
-          task_id: task.id,
-          backend: task.backend,
-          status: 'failed',
-          error: { message: errorMessage }
-        });
-        await this.audit.write({
-          request_id,
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          stage: 'execute',
-          message: `Task ${task.id} failed`,
-          data: { error: errorMessage }
-        });
-        this.telemetry.metrics.incCounter('xcfg_tasks_failed_total', 1, {
-          backend: task.backend,
-          reason: 'exception'
-        });
-        taskSpan.recordException(err);
-        taskSpan.end('error');
-      } finally {
-        this.telemetry.metrics.observeHistogram(
-          'xcfg_task_duration_ms',
-          performance.now() - taskStart,
-          {
-            backend: task.backend,
-            action: task.action,
-            status: taskOutcome
-          }
-        );
+
+        const results = orderedResults(orderedTasks, resultByTaskId);
+        const status = this.rollupStatus(plan, results);
+        if (status === 'failed') break;
       }
+
+      const status = this.rollupStatus(
+        plan,
+        orderedResults(orderedTasks, resultByTaskId)
+      );
+      if (status === 'failed') break;
     }
 
+    const results = orderedResults(orderedTasks, resultByTaskId);
     const status = this.rollupStatus(plan, results);
     this.telemetry.metrics.observeHistogram(
       'xcfg_execution_duration_ms',
@@ -296,15 +348,18 @@ export class XCFGEngine {
   }
 
   rollupStatus(plan, results) {
-    const hasFailed = results.some(r => r.status === 'failed');
+    const hasFailed = results.some(
+      r => r.status === 'failed' || r.status === 'canceled'
+    );
     const allSucceeded =
       (plan.tasks ?? []).length > 0 &&
       (plan.tasks ?? []).every(
         t => results.find(r => r.task_id === t.id)?.status === 'succeeded'
       );
-    const anyRunning = results.some(
-      r => r.status === 'running' || r.status === 'queued'
-    );
+    const anyRunning = (plan.tasks ?? []).some(task => {
+      const result = results.find(r => r.task_id === task.id);
+      return !result || result.status === 'running' || result.status === 'queued';
+    });
 
     return hasFailed
       ? 'failed'
@@ -363,3 +418,94 @@ export class XCFGEngine {
   }
 }
 
+function seedTaskResults(tasks, existingResults) {
+  const taskIds = new Set(tasks.map(t => t.id));
+  const map = new Map();
+
+  for (const r of existingResults ?? []) {
+    if (!r || typeof r !== 'object') continue;
+    if (typeof r.task_id !== 'string') continue;
+    if (!taskIds.has(r.task_id)) continue;
+    map.set(r.task_id, r);
+  }
+
+  for (const task of tasks) {
+    if (map.has(task.id)) continue;
+    map.set(task.id, { task_id: task.id, backend: task.backend, status: 'queued' });
+  }
+
+  return map;
+}
+
+function cancelBlockedTasks(tasks, resultByTaskId, timestamp) {
+  const events = [];
+  for (const task of tasks) {
+    const current = resultByTaskId.get(task.id);
+    if (!current) continue;
+    if (current.status !== 'queued') continue;
+    if (current.started_at) continue;
+
+    const failedDep = (task.depends_on ?? []).find(dep => {
+      const depResult = resultByTaskId.get(dep);
+      return (
+        depResult && (depResult.status === 'failed' || depResult.status === 'canceled')
+      );
+    });
+    if (!failedDep) continue;
+
+    const message = `Task ${task.id} canceled due to failed dependency ${failedDep}`;
+    resultByTaskId.set(task.id, {
+      ...current,
+      status: 'canceled',
+      error: { message },
+      started_at: current.started_at ?? timestamp,
+      finished_at: timestamp
+    });
+    events.push({
+      timestamp,
+      level: 'warn',
+      stage: 'execute',
+      message,
+      data: { task_id: task.id, depends_on: task.depends_on }
+    });
+  }
+  return events;
+}
+
+function listRunnableTasks(tasks, resultByTaskId) {
+  const runnable = [];
+  for (const task of tasks) {
+    const current = resultByTaskId.get(task.id);
+    if (!current) {
+      runnable.push(task);
+      continue;
+    }
+    if (current.status !== 'queued') continue;
+    if (current.started_at) continue;
+    if (!dependenciesSucceeded(task, resultByTaskId)) continue;
+    runnable.push(task);
+  }
+  return runnable;
+}
+
+function dependenciesSucceeded(task, resultByTaskId) {
+  for (const dep of task.depends_on ?? []) {
+    const depResult = resultByTaskId.get(dep);
+    if (!depResult || depResult.status !== 'succeeded') return false;
+  }
+  return true;
+}
+
+function upsertResult(resultByTaskId, taskId, patch) {
+  const existing = resultByTaskId.get(taskId) ?? { task_id: taskId };
+  resultByTaskId.set(taskId, { ...existing, ...patch });
+}
+
+function orderedResults(tasks, resultByTaskId) {
+  const results = [];
+  for (const task of tasks) {
+    const r = resultByTaskId.get(task.id);
+    if (r) results.push(r);
+  }
+  return results;
+}

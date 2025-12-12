@@ -39,5 +39,30 @@ export class InMemoryAuditSink {
   async write(event) {
     this.events.push(event);
   }
+
+  async listByRequestId(request_id, limit = 1000) {
+    return this.events.filter(e => e.request_id === request_id).slice(0, limit);
+  }
 }
 
+export class FanoutAuditSink {
+  /**
+   * @param {AuditSink[]} sinks
+   */
+  constructor(sinks) {
+    this.sinks = sinks;
+  }
+
+  async write(event) {
+    await Promise.allSettled(this.sinks.map(s => s.write(event)));
+  }
+
+  async listByRequestId(request_id, limit = 1000) {
+    for (const sink of this.sinks) {
+      if (typeof sink?.listByRequestId === 'function') {
+        return sink.listByRequestId(request_id, limit);
+      }
+    }
+    throw new Error('Audit sink does not support querying');
+  }
+}

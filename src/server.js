@@ -4,21 +4,19 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createDefaultEngine } from './index.js';
-import { ConsoleAuditSink } from './core/audit.js';
+import { ConsoleAuditSink, FanoutAuditSink, InMemoryAuditSink } from './core/audit.js';
 import { InMemoryRequestStore } from './core/requestStore.js';
-import { SQLiteAuditSink } from './core/sqliteAuditSink.js';
-import { SQLiteRequestStore } from './core/sqliteRequestStore.js';
 import { InProcessRunner } from './core/runner.js';
 import { isXcfgEnvelope } from './core/envelope.js';
 import { ConsoleTelemetry } from './core/telemetry.js';
 import { isTaskStatus } from './core/plan.js';
+import { stableStringify } from './core/stableJson.js';
 
 const telemetry = new ConsoleTelemetry();
-const useMemoryStore = process.env.XCFG_STORE === 'memory';
+const storeKind = process.env.XCFG_STORE ?? 'memory';
 const dbPath = process.env.XCFG_DB_PATH ?? 'data/xcfg.db';
 
-const store = useMemoryStore ? new InMemoryRequestStore() : new SQLiteRequestStore(dbPath);
-const auditSink = useMemoryStore ? new ConsoleAuditSink() : new SQLiteAuditSink(dbPath);
+const { store, auditSink } = await createStorage(storeKind, dbPath);
 const engine = createDefaultEngine({ telemetry, audit: auditSink });
 const runner = new InProcessRunner(engine, store);
 
@@ -57,6 +55,33 @@ async function readBody(req) {
   } catch {
     throw new Error('Invalid JSON body');
   }
+}
+
+async function createStorage(kind, path) {
+  if (kind === 'sqlite') {
+    const { SQLiteRequestStore, SQLiteAuditSink } = await import('./sqlite.js');
+    return {
+      store: new SQLiteRequestStore(path),
+      auditSink: new SQLiteAuditSink(path)
+    };
+  }
+
+  const memoryAudit = new InMemoryAuditSink();
+  return {
+    store: new InMemoryRequestStore(),
+    auditSink: new FanoutAuditSink([new ConsoleAuditSink(), memoryAudit])
+  };
+}
+
+function fingerprintEnvelope(envelope) {
+  return stableStringify({
+    api_version: envelope.api_version,
+    type: envelope.type,
+    type_version: envelope.type_version,
+    operation: envelope.operation,
+    target: envelope.target ?? null,
+    payload: envelope.payload
+  });
 }
 
 export const server = http.createServer(async (req, res) => {
@@ -101,6 +126,13 @@ export const server = http.createServer(async (req, res) => {
 
       const existing = await store.findByIdempotencyKey(body.idempotency_key);
       if (existing) {
+        if (fingerprintEnvelope(existing.envelope) !== fingerprintEnvelope(body)) {
+          return sendJson(res, 409, {
+            error: 'Idempotency key already used for a different request',
+            request_id: existing.request_id,
+            links: { self: `/v1/requests/${existing.request_id}` }
+          });
+        }
         return sendJson(res, 202, {
           request_id: existing.request_id,
           status: existing.status,
@@ -119,7 +151,14 @@ export const server = http.createServer(async (req, res) => {
         request_id,
         envelope: body,
         plan: handleResult.plan,
-        results: handleResult.results,
+        results:
+          body.operation === 'apply'
+            ? (handleResult.plan?.tasks ?? []).map(t => ({
+                task_id: t.id,
+                backend: t.backend,
+                status: 'queued'
+              }))
+            : handleResult.results,
         status: handleResult.status,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -127,6 +166,7 @@ export const server = http.createServer(async (req, res) => {
 
       if (body.operation === 'apply') {
         await runner.enqueue(request_id);
+        void runner.tick?.();
       }
 
       return sendJson(res, 202, {
@@ -185,22 +225,24 @@ export const server = http.createServer(async (req, res) => {
       }
 
       let requestStatus = record.status;
-      const planTasks = record.plan?.tasks ?? [];
-      if (results.some(r => r.status === 'failed')) {
-        requestStatus = 'failed';
-      } else if (
-        planTasks.length > 0 &&
-        planTasks.every(
-          t => results.find(r => r.task_id === t.id)?.status === 'succeeded'
-        )
-      ) {
-        requestStatus = 'executed';
+      if (record.plan) {
+        requestStatus = engine.rollupStatus(record.plan, results);
       }
 
       await store.update(ref.request_id, {
         results,
         status: requestStatus
       });
+
+      await auditSink.write({
+        request_id: ref.request_id,
+        timestamp: now,
+        level: 'info',
+        stage: 'callback',
+        message: `Callback received from ${backend}`,
+        data: { external_id, status }
+      });
+      void runner.tick?.();
 
       return sendJson(res, 202, {
         request_id: ref.request_id,
@@ -220,7 +262,7 @@ export const server = http.createServer(async (req, res) => {
       const record = await store.get(request_id);
       if (!record) return sendJson(res, 404, { error: 'Not found' });
 
-      if (!(auditSink instanceof SQLiteAuditSink)) {
+      if (typeof auditSink?.listByRequestId !== 'function') {
         return sendJson(res, 501, {
           error: 'Audit sink is not queryable in this mode'
         });
@@ -264,10 +306,8 @@ function isMainModule() {
 
 const shouldStart =
   isMainModule() ||
-  process.env.XCFG_AUTOSTART === '1' ||
-  process.env.UCE_AUTOSTART === '1';
+  process.env.XCFG_AUTOSTART === '1';
 
 if (shouldStart) {
   start(Number(process.env.PORT) || 8080);
 }
-

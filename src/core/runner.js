@@ -59,12 +59,25 @@ export class InProcessRunner {
             execute: false
           })).plan;
 
-        await this.store.update(record.request_id, { status: 'running', plan });
+        const seededResults =
+          record.results ??
+          (plan.tasks ?? []).map(t => ({
+            task_id: t.id,
+            backend: t.backend,
+            status: 'queued'
+          }));
+
+        await this.store.update(record.request_id, {
+          status: 'running',
+          plan,
+          results: seededResults
+        });
 
         const { results, status } = await this.engine.executePlan(
           record.request_id,
           record.envelope,
-          plan
+          plan,
+          seededResults
         );
 
         await this.store.update(record.request_id, { plan, results, status });
@@ -85,12 +98,20 @@ export class InProcessRunner {
     );
     for (const record of running) {
       try {
-        if (!record.plan || !record.results) continue;
-        const updatedResults = [...record.results];
+        if (!record.plan) continue;
+        const baseResults =
+          record.results ??
+          (record.plan.tasks ?? []).map(t => ({
+            task_id: t.id,
+            backend: t.backend,
+            status: 'queued'
+          }));
+        const updatedResults = [...baseResults];
         let changed = false;
         for (let i = 0; i < updatedResults.length; i++) {
           const r = updatedResults[i];
-          if (r.status !== 'running' || !r.external_id) continue;
+          if (!r.external_id) continue;
+          if (r.status !== 'running' && r.status !== 'queued') continue;
           const adapter = this.engine.getAdapter(r.backend);
           if (!adapter?.checkStatus) continue;
           const task = record.plan.tasks.find(t => t.id === r.task_id);
@@ -116,12 +137,22 @@ export class InProcessRunner {
           }
         }
 
-        if (!changed) continue;
-        const status = rollupRequestStatus(record.plan, updatedResults);
-        await this.store.update(record.request_id, {
-          results: updatedResults,
-          status
-        });
+        const before = fingerprintResults(baseResults);
+        const afterPoll = fingerprintResults(updatedResults);
+
+        const { results: progressedResults, status } = await this.engine.executePlan(
+          record.request_id,
+          record.envelope,
+          record.plan,
+          updatedResults
+        );
+        const afterExecute = fingerprintResults(progressedResults);
+
+        if (!changed && before === afterPoll && before === afterExecute && status === record.status) {
+          continue;
+        }
+
+        await this.store.update(record.request_id, { results: progressedResults, status });
       } catch (err) {
         console.error('[runner] request poll/update failed', {
           request_id: record.request_id,
@@ -148,3 +179,15 @@ function rollupRequestStatus(plan, results = []) {
   return 'executed';
 }
 
+function fingerprintResults(results) {
+  const view = (results ?? [])
+    .map(r => ({
+      task_id: r.task_id,
+      status: r.status,
+      external_id: r.external_id,
+      started_at: r.started_at,
+      finished_at: r.finished_at
+    }))
+    .sort((a, b) => a.task_id.localeCompare(b.task_id));
+  return JSON.stringify(view);
+}

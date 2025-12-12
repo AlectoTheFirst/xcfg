@@ -6,19 +6,19 @@ This is a living document. Versions are indicative.
 
 - Stable inbound intent envelope (`/v1/requests`).
 - Translator/adapter contracts + registry.
-- Minimal execution engine (sequential).
+- Minimal execution engine (DAG-aware, async-capable).
 - In‑memory request store + external ID reverse mapping.
 - HTTP gateway + callback endpoint.
-- Console audit + lightweight telemetry + `/v1/metrics`.
+- Idempotency enforcement on `idempotency_key`.
+- Queryable audit trail (`/v1/requests/<request_id>/audit`) + lightweight telemetry (`/v1/metrics`).
 
 ## 0.2 MVP Execution
 
 - Durable stores:
   - Request/event store (Postgres or similar).
   - Secrets/config store abstraction (Vault/KMS).
-- Async workflow runner with retries/backoff and task DAG scheduling.
+- Async workflow runner with retries/backoff/timeouts.
 - Message bus / queue abstraction (DB-backed queue/outbox first; pluggable NATS/RabbitMQ/Kafka later).
-- Idempotency enforcement on `idempotency_key`.
 - Authentication/authorization (mTLS + JWT/OIDC) and RBAC.
 - Schema validation per `type@type_version` (JSON Schema).
 

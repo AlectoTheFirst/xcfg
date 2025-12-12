@@ -8,6 +8,7 @@ The engine accepts a stable **intent envelope** from callers, validates/normaliz
 
 - **Intent-first inbound API**: Callers send a `type` + `payload` that represents desired change, not vendor-specific actions.
 - **Translators**: For each `type` and `type_version`, a translator produces an **Execution Plan** (tasks + dependencies) in a backend-neutral IR.
+- **DAG execution**: Plans are executed as a dependency graph (`depends_on`) and can pause/resume for async backends.
 - **Adapters**: Backend adapters execute tasks, poll/check state, and accept callbacks/webhooks.
 - **Statefulness on demand**: Some intents can be fully stateless; others persist state and reconcile with backends over time.
 - **Audit/Trace/Monitor everything**: Every request and task emits audit events with correlation IDs, timestamps, actors, inputs, outputs, and errors.
@@ -57,7 +58,7 @@ The engine accepts a stable **intent envelope** from callers, validates/normaliz
   - `apply`: Translate + execute tasks.
   - `validate`: Translate + validate against current backend state.
   - `rollback`: Request rollback of a prior request.
-- `idempotency_key`: Caller-supplied dedupe key (ServiceNow change/request ID).
+- `idempotency_key`: Caller-supplied dedupe key (ServiceNow change/request ID); same key + same request returns the original `request_id`, but reusing a key for a different request returns `409`.
 - `correlation_id`: Optional cross-system trace ID (e.g., SNOW ticket).
 - `requested_by`: Actor and originating system metadata.
 - `target`: Optional hints to assist routing (backend, domain, site, tenant).
@@ -108,6 +109,17 @@ Generic callback endpoint:
 
 xcfg will update the matching task and roll up request status.
 
+## DAGs in xcfg
+
+In xcfg, an Execution Plan is a **DAG** (Directed Acyclic Graph) of tasks:
+
+- Each task has an `id`, `backend`, `action`, and `input`.
+- A task can declare dependencies using `depends_on: ["other-task-id"]`.
+- The runner will only execute a task when all its dependencies are `succeeded`.
+- If a task returns `running`, dependent tasks remain `queued` until the runner sees it complete (via polling `checkStatus` or `POST /v1/callbacks/{backend}`).
+
+`firewall-rule-change@2` demonstrates this with a 3-step chain: `objects.ensure → rule.apply → policy.install`.
+
 ## Workflow / Visual Mapping (Future)
 
 Execution Plans are DAGs of backend-neutral tasks. Translators can be:
@@ -150,14 +162,14 @@ changing engine code. This stays optional so xcfg remains headless and testable.
 4. Ensure adapters exist for targeted backends.
 5. Add tests and observability for the new type.
 
-## Repo Layout (initial)
+## Repo Layout
 
-- `src/core`: Envelope, translator/adapter contracts, registry, engine, audit.
+- `src/server.js`: HTTP API (`/v1/requests`, callbacks, metrics, audit).
+- `src/core`: Envelope, translator/adapter contracts, registry, engine, runner, audit, telemetry.
 - `src/examples`: Example translator + adapter.
 
-This repo is currently a scaffold. Next steps are to add:
+This repo is a POC scaffold. Next steps are to add:
 
-- HTTP API gateway (validation, auth, rate limiting).
 - Durable state store + workflow runner.
 - Real adapters for each backend.
 - OpenTelemetry tracing + Prometheus metrics.
@@ -166,7 +178,7 @@ This repo is currently a scaffold. Next steps are to add:
 
 ## POC Quickstart
 
-Requirements: Node.js `>=22` (uses built-in `node:sqlite` for the default persistent store).
+Requirements: Node.js `>=22`.
 
 1. Start the server (no `npm install` needed for the POC):
 
@@ -182,11 +194,11 @@ node src/server.js
 
 Optional auth: set `XCFG_API_KEY` to require callers to send either `x-api-key: <key>` or `Authorization: Bearer <key>`.
 Optional storage:
-- `XCFG_STORE=memory` to use in-memory storage
-- `XCFG_DB_PATH=data/xcfg.db` to change SQLite path
-In SQLite mode, xcfg also persists audit events and exposes them via `GET /v1/requests/<request_id>/audit`.
+- `XCFG_STORE=memory` (default) to use in-memory storage + in-memory audit (queryable while the process runs).
+- `XCFG_STORE=sqlite` to persist requests + audit events to SQLite (uses experimental `node:sqlite` and prints an ExperimentalWarning).
+- `XCFG_DB_PATH=data/xcfg.db` to change SQLite path (when `XCFG_STORE=sqlite`).
 
-2. Submit an async request using the mock adapter:
+2. Submit an async request using the mock adapter (use `type_version:"2"` to demo DAG execution):
 
 ```sh
 curl -s http://localhost:8080/v1/requests \
@@ -194,7 +206,7 @@ curl -s http://localhost:8080/v1/requests \
   -d '{
     "api_version":"1",
     "type":"firewall-rule-change",
-    "type_version":"1",
+    "type_version":"2",
     "operation":"apply",
     "idempotency_key":"SNOW:CHG0001",
     "target":{"backend_hint":"mock-async"},
@@ -225,7 +237,7 @@ Or resolve the request by ServiceNow idempotency key:
 curl -s "http://localhost:8080/v1/requests?idempotency_key=SNOW:CHG0001"
 ```
 
-View the audit trail (SQLite mode):
+View the audit trail:
 
 ```sh
 curl -s http://localhost:8080/v1/requests/<request_id>/audit
