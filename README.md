@@ -13,6 +13,11 @@ The engine accepts a stable **intent envelope** from callers, validates/normaliz
 - **Statefulness on demand**: Some intents can be fully stateless; others persist state and reconcile with backends over time.
 - **Audit/Trace/Monitor everything**: Every request and task emits audit events with correlation IDs, timestamps, actors, inputs, outputs, and errors.
 
+## Docs
+
+- Workflow diagram: `docs/WORKFLOW.md`
+- Onboarding a new backend: `docs/ONBOARDING_BACKEND.md`
+
 ## Stable Inbound API (ServiceNow → xcfg)
 
 ### Endpoint
