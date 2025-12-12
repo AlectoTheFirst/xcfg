@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 import type { Translator } from '../../core/translator.js';
 import type { ExecutionPlan, ExecutionTask } from '../../core/plan.js';
 
@@ -69,12 +69,26 @@ export const firewallRuleChangeTranslator: Translator<FirewallRuleChangePayload>
     },
     async translate(ctx, payload): Promise<ExecutionPlan> {
       const backend = ctx.envelope.target?.backend_hint ?? 'checkpoint';
+      const action = `firewall.rule.${payload.change_kind}`;
       const task: ExecutionTask = {
-        id: randomUUID(),
+        id: stableTaskId(ctx.request_id, [
+          'firewall-rule-change',
+          '1',
+          backend,
+          action,
+          payload.rule.name
+        ]),
         backend,
-        action: `firewall.rule.${payload.change_kind}`,
+        action,
         input: payload
       };
       return { tasks: [task] };
     }
   };
+
+function stableTaskId(request_id: string, parts: string[]): string {
+  return createHash('sha256')
+    .update([request_id, ...parts].join('|'))
+    .digest('hex')
+    .slice(0, 24);
+}

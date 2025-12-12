@@ -170,16 +170,18 @@ This repo is currently a scaffold. Next steps are to add:
 
 ```sh
 npm install
-npm run build
 ```
 
-2. Start the server (SQLite store by default):
+2. Start the server (builds then runs; SQLite store by default):
 
 ```sh
-XCFG_AUTOSTART=1 npm run start
+npm start
 ```
 
 Optional auth: set `XCFG_API_KEY` to require callers to send either `x-api-key: <key>` or `Authorization: Bearer <key>`.
+Optional storage:
+- `XCFG_STORE=memory` to use in-memory storage
+- `XCFG_DB_PATH=data/xcfg.db` to change SQLite path
 
 3. Submit an async request using the mock adapter:
 

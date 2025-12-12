@@ -1,5 +1,7 @@
 import http from 'http';
 import { randomUUID } from 'crypto';
+import { resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { createDefaultEngine } from './index.js';
 import { InMemoryRequestStore } from './core/requestStore.js';
 import { SQLiteRequestStore } from './core/sqliteRequestStore.js';
@@ -238,6 +240,20 @@ export function start(port = 8080) {
   });
 }
 
-if (process.env.XCFG_AUTOSTART === '1' || process.env.UCE_AUTOSTART === '1') {
+function isMainModule(): boolean {
+  try {
+    if (!process.argv[1]) return false;
+    return resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+const shouldStart =
+  isMainModule() ||
+  process.env.XCFG_AUTOSTART === '1' ||
+  process.env.UCE_AUTOSTART === '1';
+
+if (shouldStart) {
   start(Number(process.env.PORT) || 8080);
 }

@@ -1,9 +1,6 @@
 import type { XCFGEngine, RequestStatus } from './engine.js';
-import type {
-  RequestRecord,
-  RequestStore
-} from './requestStore.js';
-import type { ExecutionTask, TaskResult, TaskStatus } from './plan.js';
+import type { RequestStore } from './requestStore.js';
+import type { ExecutionTask, TaskResult } from './plan.js';
 
 export interface RunnerOptions {
   pollIntervalMs?: number;
@@ -50,24 +47,39 @@ export class InProcessRunner {
   }
 
   private async processQueued(): Promise<void> {
-    const queued = await this.store.listByStatus(['queued'], this.opts.maxBatchSize ?? 5);
+    const queued = await this.store.listByStatus(
+      ['queued'],
+      this.opts.maxBatchSize ?? 5
+    );
     for (const record of queued) {
-      await this.store.update(record.request_id, { status: 'running' });
-      const handleResult = await this.engine.handle(record.envelope, {
-        request_id: record.request_id,
-        execute: true
-      });
-      const status = rollupRequestStatus(handleResult.plan, handleResult.results);
+      const plan =
+        record.plan ??
+        (await this.engine.handle(record.envelope, {
+          request_id: record.request_id,
+          execute: false
+        })).plan;
+
+      await this.store.update(record.request_id, { status: 'running', plan });
+
+      const { results, status } = await this.engine.executePlan(
+        record.request_id,
+        record.envelope,
+        plan
+      );
+
       await this.store.update(record.request_id, {
-        plan: handleResult.plan,
-        results: handleResult.results,
+        plan,
+        results,
         status
       });
     }
   }
 
   private async processRunning(): Promise<void> {
-    const running = await this.store.listByStatus(['running'], this.opts.maxBatchSize ?? 50);
+    const running = await this.store.listByStatus(
+      ['running'],
+      this.opts.maxBatchSize ?? 50
+    );
     for (const record of running) {
       if (!record.plan || !record.results) continue;
       const updatedResults: TaskResult[] = [...record.results];
@@ -131,4 +143,3 @@ function rollupRequestStatus(
   }
   return 'executed';
 }
-
